@@ -231,6 +231,9 @@
   .qs-tag.qs-c { background: #dbeafe; color: #1d4ed8; } .qs-tag.qs-m { background: #fef3c7; color: #92400e; } .qs-tag.qs-off { background: #fee2e2; color: #b91c1c; }
   .login-tip { font-size: 13px; line-height: 1.6; color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; margin: -4px 0 10px; }
   .pw-dlg { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px; }
+  .jd-card { cursor: default; }
+  .jd-sel { width: 100%; margin-top: 6px; padding: 7px 6px; font-size: 14px; border: 1.5px solid #93c5fd; border-radius: 6px; background: #fff; color: #0f172a; }
+  .jd-card.selected .jd-sel { border-color: #1d4ed8; background: #eff6ff; font-weight: 700; }
   .tool-views { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: #fff; border: 1.5px solid #bfdbfe; border-radius: 8px; padding: 6px; }
   .tool-views .tv-t { grid-column: 1 / -1; font-size: 13px; font-weight: 700; color: #1e3a8a; text-align: center; }
   .tool-views button { border: 1px solid #93c5fd; background: #eff6ff; color: #1e3a8a; border-radius: 6px; padding: 6px 2px; font-size: 13px; font-weight: 700; cursor: pointer; }
@@ -1005,6 +1008,7 @@
           return;
         }
         state.answers[k] = a;
+        if (state.judge && state.judge[n]) { const A = jdMap(a); document.querySelectorAll('#view-step-' + n + ' .jd-sel').forEach(s => { s.value = A[s.getAttribute('data-k')] || ''; s.closest('.jd-card').classList.toggle('selected', !!s.value); }); return; }
         const want = String(a).split(',');
         document.querySelectorAll('#view-step-' + n + ' .choice-card').forEach(c => { const m = /select(?:Choice|Multi)\('Q\d+',\s*'([^']+)'/.exec(c.getAttribute('onclick') || ''); c.classList.toggle('selected', !!(m && want.indexOf(m[1]) >= 0)); });
         const mc = document.getElementById('mc-' + n); if (mc && state.multi[n]) mc.textContent = '（已選 ' + want.length + '／' + state.multi[n] + '）';
@@ -1527,7 +1531,7 @@
     function slotOf(n) { return (state.slot && state.slot[n]) || n; }
     const CATS = { shape: '形狀配對／拼版', fold: '展開與折疊', rotate: '3D 心像旋轉', visual: '空間視覺化／視角', logic: '圖形規律推理' };
 
-    state.answers = {}; state.multi = {};
+    state.answers = {}; state.multi = {}; state.judge = {};
     state.correct = { Q2: 'A', Q3: 'A' };
     state.qTime = {};
     state.cur = 1;
@@ -2147,7 +2151,8 @@
           </div>`;
         }
         if (q.multi) state.multi[q.n] = q.multi;
-        const opts = q.options.map(o => `<div class="choice-card" onclick="${q.multi ? 'selectMulti' : 'selectChoice'}('Q${q.n}', '${o.key}', this${q.multi ? ', ' + q.multi : ''})"><div class="choice-img tall${q.txt ? ' txt' : ''}">${o.html}</div><div class="opt-label">${o.label}</div></div>`).join('');
+        if (q.judge) state.judge[q.n] = q.options.map(o => o.key);
+        const opts = q.judge ? q.options.map(o => `<div class="choice-card jd-card" data-k="${o.key}"><div class="choice-img tall">${o.html}</div><div class="opt-label">${o.label}</div><select class="jd-sel" data-k="${o.key}" onchange="selectJudge(${q.n})"><option value="">請判斷這個選項…</option>${q.judge.map(r => `<option value="${r[0]}">${r[1]}</option>`).join('')}</select></div>`).join('') : q.options.map(o => `<div class="choice-card" onclick="${q.multi ? 'selectMulti' : 'selectChoice'}('Q${q.n}', '${o.key}', this${q.multi ? ', ' + q.multi : ''})"><div class="choice-img tall${q.txt ? ' txt' : ''}">${o.html}</div><div class="opt-label">${o.label}</div></div>`).join('');
         return `<div id="view-step-${q.n}" class="card" style="display:none;">
           <div class="quiz-header">
             <div class="quiz-title"><span>第${q.n}題：${q.title}</span><span class="score-badge">配分：${QINFO[q.n - 1].max} 分</span></div>
@@ -3228,21 +3233,31 @@ const ORIG_Q3_OPTS = ["<svg width=\"45\" height=\"45\" viewBox=\"0 0 50 50\"> <p
       const pre = shoeSVG(Object.assign({}, upper, { midsole: G.midsole, outsole: G.outsole }), 460, 330, { off: off, arrows: arrows, tags: [['heel', '鞋面', 'l'], ['midsole', '中底', 'l'], ['outsole', '大底', 'l']] });
       const M = cfg.k;   // 比例錯誤的幅度
       const pool = shuffled([
-        { mod: { mid: 1 + M }, why: '中底太厚（約 ' + Math.round((1 + M) * 100) + '%）' },
-        { mod: { mid: 1 - M * 0.75 }, why: '中底太薄（約 ' + Math.round((1 - M * 0.75) * 100) + '%）' },
-        { mod: { up: 1 + M * 0.8 }, why: '鞋面太高（約 ' + Math.round((1 + M * 0.8) * 100) + '%）' },
-        { mod: { up: 1 - M * 0.6 }, why: '鞋面太矮（約 ' + Math.round((1 - M * 0.6) * 100) + '%）' },
-        { mod: { flipMid: true }, why: '中底前後裝反（厚的一端跑到鞋頭）' },
-        { mod: { heelW: 1 + M * 1.4 }, why: '後套太長（約 ' + Math.round((1 + M * 1.4) * 100) + '%）' },
-        { mod: { spring: 2.6 }, why: '鞋頭翹得太高（大底形狀不對）' }
+        { c: 'mid+', mod: { mid: 1 + M }, why: '中底太厚（約 ' + Math.round((1 + M) * 100) + '%）' },
+        { c: 'mid-', mod: { mid: 1 - M * 0.75 }, why: '中底太薄（約 ' + Math.round((1 - M * 0.75) * 100) + '%）' },
+        { c: 'up+', mod: { up: 1 + M * 0.8 }, why: '鞋面太高（約 ' + Math.round((1 + M * 0.8) * 100) + '%）' },
+        { c: 'up-', mod: { up: 1 - M * 0.6 }, why: '鞋面太矮（約 ' + Math.round((1 - M * 0.6) * 100) + '%）' },
+        { c: 'flip', mod: { flipMid: true }, why: '中底前後裝反（厚的一端跑到鞋頭）' },
+        { c: 'heel', mod: { heelW: 1 + M * 1.4 }, why: '後套太長（約 ' + Math.round((1 + M * 1.4) * 100) + '%）' },
+        { c: 'spring', mod: { spring: 2.6 }, why: '鞋頭翹得太高（大底形狀不對）' }
       ]);
       const pick = []; const usedKey = {};
       pool.forEach(c => { const k = Object.keys(c.mod)[0]; if (pick.length < cfg.nopt - 1 && !usedKey[k]) { usedKey[k] = 1; pick.push(c); } });
-      const items = shuffled([{ ok: true, mod: {} }].concat(pick.map(c => ({ ok: false, mod: c.mod, why: c.why }))));
+      const items = shuffled([{ ok: true, mod: {}, c: 'ok' }].concat(pick.map(c => ({ ok: false, mod: c.mod, why: c.why, c: c.c }))));
       const scs = shuffled([0.62, 0.72, 0.82, 0.92, 1, 0.68].slice(0, items.length));
       items.forEach((it, i) => { it.sc = scs[i]; it.flip = cfg.flip && rnd(2) === 1; });
       const keys = 'ABCDEF'.split('').slice(0, items.length);
       const r = makeOptions(items, keys, it => { const g = shoeGeo(P, it.mod); let parts = { tongue: g.tongue, outsole: g.outsole, midsole: g.midsole, heel: g.heel, quarter: g.quarter, vamp: g.vamp, eyestay: g.eyestay, holes: g.holes }; if (it.flip) { const mx = P.L; Object.keys(parts).forEach(k => { parts[k] = parts[k].map(p => [mx - p[0], p[1]]); }); } return shoeSVG(parts, 230, 130, { sc: it.sc }); });
+      const JUDGE = [['ok', '正確（比例都對）'], ['mid+', '中底太厚'], ['mid-', '中底太薄'], ['up+', '鞋面太高'], ['up-', '鞋面太矮'], ['flip', '中底前後裝反'], ['heel', '後套太長'], ['spring', '鞋頭翹太高']];
+      const jdAns = items.map((it, i) => keys[i] + ':' + it.c).sort().join(',');
+      if (cfg.judge) return {
+        n: 15, wide: false, cols: 2, correct: jdAns, options: r.options, judge: JUDGE,
+        title: '鞋子爆炸圖（比例判斷，逐一判斷每個選項）',
+        desc: '左圖是一雙鞋的<b>側視爆炸圖</b>：鞋面、中底、大底三個部分拆開，依<b>同一比例</b>繪製，虛線表示組合方向。右邊是 ' + items.length + ' 個組合完成後的側視圖，<b>每個選項的縮放大小都不一樣</b>，所以不能比大小，要比<b>各部分之間的比例</b>。其中只有一個比例完全正確，其他每個都各有<b>一個</b>地方不對。請在每個選項下方選出：它是「正確」的，還是錯在哪裡。每個選項判斷對都會得分。',
+        prompt: '請逐一判斷每個選項：',
+        preview: '<div style="text-align:center"><div style="font-weight:700;color:#334155;margin-bottom:4px">爆炸圖（同一比例）</div>' + pre + '</div>',
+        explain: () => '<b class="k">解析：</b>正確的是 (' + r.correct + ')。其他選項：' + items.map((it, i) => it.ok ? null : '(' + keys[i] + ') ' + it.why).filter(Boolean).join('；') + '。<br><b class="k">解題技巧：</b>先找一個「基準」（例如整雙鞋的長度），再看其他部分是基準的幾分之幾：中底厚度大約是鞋長的幾分之一、鞋面最高處大約是中底的幾倍、中底哪一端比較厚、後套佔鞋長的多少。'
+      };
       return {
         n: 15, wide: false, cols: 2, correct: r.correct, options: r.options,
         title: '鞋子爆炸圖（比例判斷）',
@@ -3281,7 +3296,7 @@ const ORIG_Q3_OPTS = ["<svg width=\"45\" height=\"45\" viewBox=\"0 0 50 50\"> <p
         explain: () => '<b class="k">解析：</b>答案是 (' + correct + ') ' + SHOE_NAME[bad] + '，它' + dirTxt + '。<br><b class="k">解題技巧：</b>因為零件整體縮小了，不能直接比大小；先用一片確定是對的零件（例如鞋頭片）算出縮小的倍數，再用同樣的倍數檢查其他零件的「長／高」比例。'
       };
     }
-    bk(15, 4, 'mid', '鞋子爆炸圖：選出比例正確的成品（選項大小不同）', () => genShoeExplodeA({ k: 0.4, nopt: 4 }));
+    bk(15, 4, 'mid', '鞋子爆炸圖：逐一判斷每個成品「正確」或「錯在哪裡」（選項大小不同）', () => genShoeExplodeA({ k: 0.4, nopt: 4, judge: true }));
     bk(15, 5, 'hard', '鞋子爆炸圖：找出比例畫錯的零件', () => genShoeExplodeB({ k: 0.3, nopt: 6, small: 0.8 }));
     for (let i = BANK.length - 1; i >= 0; i--) if (BANK[i].slot === 2) BANK.splice(i, 1);   // 停用「空間折疊」（改用爆炸圖）
     ['Q4-2', 'Q5-2', 'Q4-4', 'Q9-3', 'Q5-4', 'Q6-5'].forEach(id => { const i = BANK.findIndex(b => b.id === id); if (i >= 0) BANK.splice(i, 1); });
@@ -4279,6 +4294,11 @@ function sendRecord(rec) {
 
     // ---- 題庫總覽 ----
     function qPreviewHtml(q) {
+      if (q.judge) {   // 判斷題：每個選項下面寫出標準答案
+        const C = jdMap(q.correct), T = {}; q.judge.forEach(r => { T[r[0]] = r[1]; });
+        return '<div class="quiz-split"><div class="preview-panel">' + q.preview + '</div><div class="choice-panel"><div style="font-weight:600;font-size:13px;margin-bottom:8px;">' + q.prompt + '</div><div class="choice-grid" style="grid-template-columns:repeat(' + q.cols + ',1fr)">' +
+          q.options.map(o => '<div class="choice-card ' + (C[o.key] === 'ok' ? 'rv-ok' : '') + '" style="cursor:default"><div class="choice-img tall">' + o.html + '</div><div class="opt-label">' + o.label + '　<b style="color:' + (C[o.key] === 'ok' ? '#166534' : '#b91c1c') + '">' + esc(T[C[o.key]] || '') + '</b></div></div>').join('') + '</div></div></div>';
+      }
       if (q.interactive) {
         return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start"><div>' + plateSVG(q.S) + '</div><div style="display:flex;gap:6px;flex-wrap:wrap">' + q.items.map(it => '<div style="border:2px solid ' + (it.correct ? '#16a34a' : '#e2e8f0') + ';border-radius:6px;padding:2px;background:' + (it.correct ? '#f0fdf4' : '#fff') + '">' + pieceSVG(it.poly) + '<div style="text-align:center;font-size:12px;font-weight:700">(' + it.key + ')' + (it.correct ? ' ✔ 正解' : '') + '</div></div>').join('') + '</div></div>';
       }
@@ -4306,6 +4326,7 @@ function sendRecord(rec) {
     }
     function isAnswered(n) {
       if (QCTX[n]) return (QCUR === QCTX[n] ? pieces : QCTX[n].pieces).some(p => p.isSnapped);
+      if (state.judge && state.judge[n]) return (state.answers['Q' + n] || '').split(',').filter(Boolean).length === state.judge[n].length;
       return !!state.answers['Q' + n];
     }
     function updateNav() {
@@ -4333,6 +4354,13 @@ function sendRecord(rec) {
       window.scrollTo(0, 0);
     }
 
+    // 判斷題：每個選項都要選「正確」或「錯在哪裡」；答案存成「A:ok,B:mid+,…」
+    function selectJudge(n) {
+      const v = document.getElementById('view-step-' + n), parts = [];
+      v.querySelectorAll('.jd-sel').forEach(s => { s.closest('.jd-card').classList.toggle('selected', !!s.value); if (s.value) parts.push(s.getAttribute('data-k') + ':' + s.value); });
+      state.answers['Q' + n] = parts.sort().join(',');
+      updateNav();
+    }
     function selectMulti(qKey, optKey, el, k) {
       let cur = (state.answers[qKey] || '').split(',').filter(Boolean);
       const i = cur.indexOf(optKey);
@@ -4407,6 +4435,12 @@ function sendRecord(rec) {
         const sc = ok ? (tr <= 2 ? info.max : Math.round(info.max / 2)) : 0;
         return { score: sc, text: (ok ? `已吻合（零件 ${a}，不吻合嘗試 ${tr} 次）` : `未完成（不吻合嘗試 ${tr} 次）`) + `　<b style="color:#b45309">正確零件：(${state.correct['Q' + info.n]}) 轉到正確方向後吻合</b>`, ok };
       }
+      if (state.judge && state.judge[info.n]) {   // 判斷題：每個選項判斷對就拿那一份分數
+        const C = jdMap(state.correct['Q' + info.n]), A = jdMap(a), ks = state.judge[info.n];
+        const hit = ks.filter(k => A[k] && A[k] === C[k]).length, sc = Math.round(info.max * hit / ks.length);
+        const T = jdTxt(info.n);
+        return { score: sc, ok: hit === ks.length, text: (a ? '判斷對 ' + hit + '／' + ks.length + ' 個選項' : '未作答') + (hit === ks.length ? '' : '　<b style="color:#b45309">正確：' + ks.map(k => '(' + k + ') ' + (T[C[k]] || C[k])).join('；') + '</b>') };
+      }
       const mk = state.multi && state.multi[info.n];
       if (mk) {
         const cs = state.correct['Q' + info.n].split(','), as = (a || '').split(',').filter(Boolean);
@@ -4466,6 +4500,8 @@ function sendRecord(rec) {
       return '';
     }
 
+    function jdMap(s) { const o = {}; String(s || '').split(',').filter(Boolean).forEach(x => { const i = x.indexOf(':'); o[x.slice(0, i)] = x.slice(i + 1); }); return o; }
+    function jdTxt(n) { const q = (window._gens || []).find(g => g.n === n), o = {}; ((q && q.judge) || []).forEach(r => { o[r[0]] = r[1]; }); return o; }
     function buildReview() {
       const out = [];
       QINFO.forEach(info => {
@@ -4491,6 +4527,15 @@ function sendRecord(rec) {
           desc = dEl ? dEl.innerHTML : '';
           const split = view.querySelector('.quiz-split').cloneNode(true);
           const corr = state.correct['Q' + n];
+          if (state.judge && state.judge[n]) {
+            const C = jdMap(corr), A = jdMap(a), T = jdTxt(n);
+            split.querySelectorAll('.jd-card').forEach(c => {
+              const k = c.getAttribute('data-k'), sel = c.querySelector('select'); if (sel) sel.remove(); c.classList.remove('selected');
+              const good = A[k] && A[k] === C[k];
+              c.classList.add(good ? 'rv-ok' : 'rv-bad');
+              c.insertAdjacentHTML('beforeend', '<div style="font-size:12px;margin-top:4px;line-height:1.5">你的判斷：' + (A[k] ? esc(T[A[k]] || A[k]) : '（未判斷）') + (good ? ' ✔' : '<br><b style="color:#166534">正確：' + esc(T[C[k]] || C[k]) + '</b>') + '</div>');
+            });
+          } else
           split.querySelectorAll('.choice-card').forEach(c => {
             const m = /select(?:Choice|Multi)\('Q\d+',\s*'([^']+)'/.exec(c.getAttribute('onclick') || '');
             const key = m ? m[1] : '';
