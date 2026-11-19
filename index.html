@@ -872,7 +872,7 @@
     let ctx = canvas.getContext('2d');
 
     function startApp(opts) {
-      try { return _startApp(opts); } catch (err) {
+      try { return _startApp(opts); } catch (err) { try { console.error(err && err.stack); } catch (e) {}
         try { var er = document.getElementById('auth-err'); er.textContent = '進入測驗時發生錯誤：' + (err && err.message ? err.message : err) + '（請截圖給管理員）'; er.style.display = 'block'; document.getElementById('view-auth').style.display = ''; } catch (e2) {}
       }
     }
@@ -899,7 +899,7 @@
       const byIds = L => (L || []).map(id => BANK.find(b => b.id === id)).filter(Boolean);
       const fx = paperFixed(cfg.paper);   // 試卷設定為「固定題目」：每位應徵者題目、圖形、選項順序都相同
       state.seed = R ? R.seed : fx ? fx.seed : rid(10);
-      state.fixed = !!fx;
+      state.fixed = !!fx && cfg.paper.mode === 'fixed';
       state.plan = R ? byIds(R.planIds) : fx ? byIds(fx.ids) : opts.planIds ? byIds(opts.planIds) : planTest();
       if (!state.plan.length) throw new Error('沒有取得題目');
       const pts = assignPoints(state.plan);
@@ -958,7 +958,8 @@
     function seededRand(s) { let a = parseInt(hash2(String(s)).slice(0, 8), 16) >>> 0; return function () { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
     function withSeed(tag, fn) { if (!state.seed) return fn(); const R0 = Math.random; Math.random = seededRand(state.seed + '|' + tag); try { return fn(); } finally { Math.random = R0; } }
     function paperFixed(p) {
-      const f = p && p.mode === 'fixed' && p.fixed; if (!f || !f.ids || !f.ids.length || !f.seed) return null;
+      const f = p && (p.mode === 'fixed' || p.mode === 'pre') && p.fixed;   // pre＝產生邀請碼時已經抽好的題目
+      if (!f || !f.ids || !f.ids.length || !f.seed) return null;
       const ok = f.ids.every(id => { const b = BANK.find(x => x.id === id); return b && (!b.txt || b.src); });
       return ok ? f : null;
     }
@@ -3362,19 +3363,25 @@ function poolCount(R) { const c = { easy: 0, mid: 0, hard: 0 }; rolePool(R).forE
 function planFromCfg(c) {
   const out = [], want = [null, 'easy', 'mid', 'hard'][c.d3 || 0];
   if (c.n3 > 0) { const S3 = [13, 14].filter(s => BANK.some(b => b.slot === s && !b.off)); (c.n3 >= 2 ? S3 : S3.length ? [S3[rnd(S3.length)]] : []).forEach(s => { let p = BANK.filter(b => b.slot === s && !b.off && (!want || b.diff === want)); if (!p.length) p = BANK.filter(b => b.slot === s && !b.off); out.push(p[rnd(p.length)]); }); }
-  const pool = rolePool(c.role), used = {}, pick = [];
+  const cnt = roleOf(c.role).cnt || {}, need = { easy: c.easy | 0, mid: c.mid | 0, hard: c.hard | 0 };
+  const pool0 = rolePool(c.role), pool = pool0.filter(b => !cnt[b.slot]), used = {}, pick = [];
+  // 指定題數的題型：先抽滿指定的題數（難度盡量配合還缺的難易度）
+  Object.keys(cnt).forEach(sl => {
+    const cand = shuffled(pool0.filter(b => b.slot === +sl));
+    for (let i = 0; i < cnt[sl] && cand.length; i++) { cand.sort((a, b) => need[b.diff] - need[a.diff]); const b = cand.shift(); pick.push(b); need[b.diff]--; }
+  });
   const pref = roleOf(c.role).prefer || {}, share = roleOf(c.role).coreShare;   // 幕僚：細節核對加倍；開發：專業題約占 7 成
   const light = roleOf(c.role).light || {};   // 開發：文字推理、數列推理出現機會較少
   const wt = x => (used[x.slot] || 0) / (pref[x.slot] || 1) + (isCore(c.role, x) ? 0 : 1.5) + (light[x.slot] || 0);
   const grab = (cand, n) => { while (n > 0 && cand.length) { cand.sort((a, b) => wt(a) - wt(b)); const b = cand.shift(); used[b.slot] = (used[b.slot] || 0) + 1; pick.push(b); n--; } return n; };
   ['easy', 'mid', 'hard'].forEach(d => {
-    const need = c[d] || 0, all = shuffled(pool.filter(b => b.diff === d));
+    const nd = Math.max(0, need[d]), all = shuffled(pool.filter(b => b.diff === d));
     if (share) {
       const core = all.filter(b => isCore(c.role, b)), rest = all.filter(b => !isCore(c.role, b));
-      const nc = Math.round(need * share);
-      const leftC = grab(core, nc), leftR = grab(rest, need - nc + leftC);
+      const nc = Math.round(nd * share);
+      const leftC = grab(core, nc), leftR = grab(rest, nd - nc + leftC);
       if (leftR > 0) grab(core, leftR);
-    } else grab(all, need);
+    } else grab(all, nd);
   });
   const rank = { easy: 0, mid: 1, hard: 2 }; let best = null;
   for (let k = 0; k < 80; k++) { const s = shuffled(pick).sort((a, b) => rank[a.diff] - rank[b.diff]); if (!best) best = s; if (!s.some((b, i) => i > 0 && b.slot === s[i - 1].slot)) { best = s; break; } }
@@ -3392,13 +3399,18 @@ const normCode = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 function invOf(code) { const k = normCode(code); return Object.values(INVITES).find(v => normCode(v.code) === k) || null; }
 function recWho(r) { const v = invOf(r.code); return v && v.label ? v.label : (r.cid && normCode(r.cid) !== normCode(r.code) ? r.cid : '—'); }
 function recRole(r) { if (r.paperName) return r.paperName; const R = r.role || (parseInvite(r.code) || {}).role; return R && ROLES[R] ? ROLES[R].name : ''; }
-function cfgTxt(c) { return (c.n3 ? '3D 紙樣 ' + c.n3 + ' 題＋' : '') + '簡單 ' + c.easy + '／中等 ' + c.mid + '／困難 ' + c.hard + '（共 ' + (c.n3 + c.easy + c.mid + c.hard) + ' 題，' + c.min + ' 分鐘）'; }
+function cfgTxt(c) { const C = roleOf(c.role).cnt || {}, nc = Object.keys(C).length; return (c.n3 ? '3D 紙樣 ' + c.n3 + ' 題＋' : '') + (nc ? nc + ' 種題型指定題數' + (c.easy + c.mid + c.hard ? '＋其他題型 簡單 ' + c.easy + '／中等 ' + c.mid + '／困難 ' + c.hard : '') : '簡單 ' + c.easy + '／中等 ' + c.mid + '／困難 ' + c.hard) + '（共 ' + planLen(c) + ' 題，' + c.min + ' 分鐘）'; }
 function invLink(code) { const base = /^https?:/.test(location.href) ? location.origin + location.pathname : ''; return base ? base + '?code=' + encodeURIComponent(code) : ''; }
 function genInvite() {
   const P = giPaper(); if (!P) { alert('請先到「試卷管理」新增試卷，再選擇要測的試卷類別。'); return; }
-  if (P.mode === 'fixed' && !bankReady()) return;   // 固定題目要把文字題內容一起放進邀請碼，題目必須先載入
+  if (!bankReady()) return;   // 題目要先載入：邀請碼產生時就把這位應徵者的題目抽好（文字題內容一起放進去）
   const c = paperCfg(P);
-  if (c.n3 + c.easy + c.mid + c.hard < 1) { alert('這份試卷目前沒有可出的題目，請先到「試卷管理」調整。'); return; }
+  if (P.mode !== 'fixed') {   // 隨機試卷：每組邀請碼各自抽一份（指定題數、新題型才會照前端的規則出題）
+    const plan = planFromCfg(c);
+    if (!plan.length) { alert('這份試卷目前沒有可出的題目，請先到「試卷管理」調整。'); return; }
+    c.paper = Object.assign({}, c.paper, { mode: 'pre', fixed: fixedPack(plan.map(b => b.id), rid(10)) });
+  }
+  if (planLen(c) < 1) { alert('這份試卷目前沒有可出的題目，請先到「試卷管理」調整。'); return; }
   const taken = k => Object.values(INVITES).some(v => normCode(v.code) === normCode(k)) || RECORDS.some(r => normCode(r.code) === normCode(k)) || !!STARTS[normCode(k)];
   const cc = Object.assign({}, c, { role: c.base });
   let code = makeInviteRnd(), tries = 0;   // 全部隨機（試卷設定存在雲端，不再編進邀請碼）
@@ -3454,7 +3466,7 @@ let PAPERS = {}, QB = {}, CT = {};
 const GFX_SLOTS = [15, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const TXT_SLOTS = [21, 22, 32, 33, 34, 23, 24, 25, 31, 26, 27, 30];
 const D3_TXT = ['隨機', '簡單', '中等', '困難'];
-function sugMin(c) { return Math.max(5, Math.ceil(((c.n3 || 0) * 10 + (c.easy || 0) * 1.5 + (c.mid || 0) * 2.5 + (c.hard || 0) * 3.5) / 5) * 5); }
+function sugMin(c) { const nc = Object.keys(c.cnt || {}).reduce((a, k) => a + (c.cnt[k] | 0), 0); if (nc) { const t = paperTotal(c); return Math.max(5, Math.ceil(((c.n3 || 0) * 10 + (t - (c.n3 || 0)) * 2.5) / 5) * 5); } return Math.max(5, Math.ceil(((c.n3 || 0) * 10 + (c.easy || 0) * 1.5 + (c.mid || 0) * 2.5 + (c.hard || 0) * 3.5) / 5) * 5); }
 function rid(n) { const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', u = new Uint32Array(n); try { crypto.getRandomValues(u); } catch (e) { for (let i = 0; i < n; i++) u[i] = Math.random() * 4294967296; } let r = ''; for (let i = 0; i < n; i++) r += A[u[i] % A.length]; return r; }
 function presetPaper(R) {
   const X = ROLES[R], w = {};
@@ -3516,16 +3528,21 @@ function paperBase(p) {
 }
 function regPaper(p, key) {
   key = key || ('P:' + p.pid);
-  const ty = [...new Set((p.types || []).map(typeSlot).map(s => s === 2 ? 15 : s))], light = {}, prefer = {};   // 「空間折疊」已停用，舊試卷自動改成「爆炸圖」
+  const ty = [...new Set((p.types || []).map(typeSlot).map(s => s === 2 ? 15 : s))], light = {}, prefer = {}, cnt = {};
+  Object.keys(p.cnt || {}).forEach(k => { let s = typeSlot(k); if (s === 2) s = 15; if ((p.cnt[k] | 0) > 0 && ty.indexOf(s) >= 0) cnt[s] = p.cnt[k] | 0; });   // 「空間折疊」已停用，舊試卷自動改成「爆炸圖」
   Object.keys(p.w || {}).forEach(k => { let s = typeSlot(k); if (s === 2) s = 15; if (p.w[k] === 'less') light[s] = 0.5; if (p.w[k] === 'more') prefer[s] = 2; });
-  ROLES[key] = { name: p.name, test: p.title || (p.name + '能力測驗'), sub: ty.map(s => TYPE_INFO[s] ? TYPE_INFO[s].title : '').filter(Boolean).join('・') || '自訂試卷', types: ty, slots: ty, light: light, prefer: prefer, coreShare: p.coreShare || 0, excl: p.excl || [], def: { n3: p.n3, d3: p.d3, easy: p.easy, mid: p.mid, hard: p.hard }, isPaper: true };
+  ROLES[key] = { name: p.name, test: p.title || (p.name + '能力測驗'), sub: ty.map(s => TYPE_INFO[s] ? TYPE_INFO[s].title : '').filter(Boolean).join('・') || '自訂試卷', types: ty, slots: ty, light: light, prefer: prefer, cnt: cnt, coreShare: p.coreShare || 0, excl: p.excl || [], def: { n3: p.n3, d3: p.d3, easy: p.easy, mid: p.mid, hard: p.hard }, isPaper: true };
   return key;
 }
+function fixedPack(ids, seed) {   // 題號＋亂數種子＋文字題內容
+  const text = {}; ids.forEach(id => { const b = BANK.find(x => x.id === id); if (b && b.txt && b.src) text[id] = { q: b.src.q, o: b.src.o, e: b.src.e }; });
+  return { ids: ids.slice(), seed: seed, text: text };
+}
+function planLen(c) { if (c.paper && c.paper.fixed && c.paper.fixed.ids) return c.paper.fixed.ids.length; try { return planFromCfg(c).length; } catch (e) { return c.n3 + c.easy + c.mid + c.hard; } }
 function snapPaper(p) {
-  const o = { pid: p.pid, name: p.name, title: p.title || '', base: p.base || paperBase(p), types: (p.types || []).slice(), w: Object.assign({}, p.w || {}), coreShare: p.coreShare || 0, excl: (p.excl || []).slice(), n3: p.n3, d3: p.d3, easy: p.easy, mid: p.mid, hard: p.hard, min: p.min, names: !!p.names, mode: p.mode === 'fixed' ? 'fixed' : 'random' };
+  const o = { pid: p.pid, name: p.name, title: p.title || '', base: p.base || paperBase(p), types: (p.types || []).slice(), w: Object.assign({}, p.w || {}), cnt: Object.assign({}, p.cnt || {}), coreShare: p.coreShare || 0, excl: (p.excl || []).slice(), n3: p.n3, d3: p.d3, easy: p.easy, mid: p.mid, hard: p.hard, min: p.min, names: !!p.names, mode: p.mode === 'fixed' ? 'fixed' : 'random' };
   if (o.mode === 'fixed' && p.fixed && p.fixed.ids) {   // 固定題目：把題號、亂數種子，以及文字題的內容一起放進邀請碼，應徵者端就能拿到同一份題目
-    const text = {}; p.fixed.ids.forEach(id => { const b = BANK.find(x => x.id === id); if (b && b.txt && b.src) text[id] = { q: b.src.q, o: b.src.o, e: b.src.e }; });
-    o.fixed = { ids: p.fixed.ids.slice(), seed: p.fixed.seed, text: text };
+    o.fixed = fixedPack(p.fixed.ids, p.fixed.seed);
   }
   return o;
 }
@@ -3541,7 +3558,7 @@ function renderPapers() {
   const body = document.getElementById('pp-body'); if (!body) return;
   body.innerHTML = livePapers().map(p => {
     const key = regPaper(p), pc = poolCount(key), warn = ['easy', 'mid', 'hard'].filter(d => (p[d] | 0) > pc[d]);
-    return '<tr><td><b>' + esc(p.name) + '</b>' + (p.mode === 'fixed' ? ' <span class="qs-tag qs-m">固定題目</span>' : ' <span class="qs-tag">隨機抽題</span>') + (p.n3 ? (p.names ? ' <span class="qs-tag">紙樣有名稱</span>' : '') : '') + '<br><small style="color:#64748b">' + esc(p.title || (p.name + '能力測驗')) + (p.by ? '<br>最後修改：' + esc(p.by) : '') + '</small></td><td style="font-size:12px;max-width:260px">' + esc(paperTypesTxt(p)) + '</td><td>' + (p.n3 ? p.n3 + ' 題（' + D3_TXT[p.d3 | 0] + '）' : '—') + '</td><td>' + (p.easy | 0) + '／' + (p.mid | 0) + '／' + (p.hard | 0) + (warn.length ? '<br><small style="color:#dc2626">題庫不足：' + warn.map(d => DIFF_TXT[d]).join('、') + '</small>' : '') + '</td><td><b>' + ((p.n3 | 0) + (p.easy | 0) + (p.mid | 0) + (p.hard | 0)) + '</b></td><td>' + (p.min | 0) + ' 分鐘</td>' +
+    return '<tr><td><b>' + esc(p.name) + '</b>' + (p.mode === 'fixed' ? ' <span class="qs-tag qs-m">固定題目</span>' : ' <span class="qs-tag">隨機抽題</span>') + (p.n3 ? (p.names ? ' <span class="qs-tag">紙樣有名稱</span>' : '') : '') + '<br><small style="color:#64748b">' + esc(p.title || (p.name + '能力測驗')) + (p.by ? '<br>最後修改：' + esc(p.by) : '') + '</small></td><td style="font-size:12px;max-width:260px">' + esc(paperTypesTxt(p)) + '</td><td>' + (p.n3 ? p.n3 + ' 題（' + D3_TXT[p.d3 | 0] + '）' : '—') + '</td><td>' + (p.easy | 0) + '／' + (p.mid | 0) + '／' + (p.hard | 0) + (warn.length ? '<br><small style="color:#dc2626">題庫不足：' + warn.map(d => DIFF_TXT[d]).join('、') + '</small>' : '') + '</td><td><b>' + paperTotal(p) + '</b></td><td>' + (p.min | 0) + ' 分鐘</td>' +
       '<td style="white-space:nowrap"><button class="btn-action" onclick="pEdit(\'' + p.pid + '\')">編輯</button> <button class="btn-action" onclick="pCopy(\'' + p.pid + '\')">複製</button> <button class="btn-action" onclick="pTrial(\'' + p.pid + '\')">試做</button> <button class="btn-action" onclick="pUse(\'' + p.pid + '\')">產生邀請碼</button> <button class="btn-action" onclick="pDel(\'' + p.pid + '\')">刪除</button></td></tr>';
   }).join('') || '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">還沒有任何試卷，請按「＋ 新增試卷」。</td></tr>';
   giFill();
@@ -3553,9 +3570,11 @@ function pEdit(pid, copy) {
   if (copy) { p.pid = ''; p.name = p.name + '（複製）'; p.title = ''; if (p.fixed) p.fixed = Object.assign({}, p.fixed, { seed: rid(10) }); }
   window._pe = p; window._peMinTouched = !!(src && !copy);
   const box = document.getElementById('pp-edit'); box.style.display = 'block';
-  const row = (s, key) => { const k = String(key), on = p.types.map(String).indexOf(k) >= 0, w = p.w[k] || '';
-    return '<label class="pe-ty' + (on ? ' on' : '') + '"><input type="checkbox" data-k="' + esc(k) + '"' + (on ? ' checked' : '') + ' onchange="this.parentNode.classList.toggle(\'on\',this.checked);peUpdate()"> ' + esc(TYPE_INFO[s].title) + ' <small>（' + typeCount(s) + ' 題）</small>' +
-      '<select data-w="' + esc(k) + '" onchange="peUpdate()"><option value="">出題機會：一般</option><option value="more"' + (w === 'more' ? ' selected' : '') + '>出題機會：較多</option><option value="less"' + (w === 'less' ? ' selected' : '') + '>出題機會：較少</option></select></label>'; };
+  p.cnt = p.cnt || {};
+  const row = (s, key) => { const k = String(key), on = p.types.map(String).indexOf(k) >= 0, tc = typeCount(s), cv = p.cnt[k];
+    let opts = '<option value="">出題數：自動</option>'; for (let i = 1; i <= tc; i++) opts += '<option value="' + i + '"' + (cv === i ? ' selected' : '') + '>出題數：' + i + ' 題</option>';
+    return '<label class="pe-ty' + (on ? ' on' : '') + '"><input type="checkbox" data-k="' + esc(k) + '"' + (on ? ' checked' : '') + ' onchange="this.parentNode.classList.toggle(\'on\',this.checked);peUpdate()"> ' + esc(TYPE_INFO[s].title) + ' <small>（' + tc + ' 題）</small>' +
+      '<select data-c="' + esc(k) + '" onchange="peCnt(this)">' + opts + '</select></label>'; };
   const txt = TXT_SLOTS.filter(s => BANK.some(b => b.slot === s)).map(s => row(s, s)).join('');
   const gfx = GFX_SLOTS.filter(s => BANK.some(b => b.slot === s)).map(s => row(s, s)).join('');
   const cus = customTypes().map(k => row(typeSlot(k), k)).join('') || '<div style="color:#94a3b8;font-size:13px">（還沒有自訂題型；在「題目管理」新增題目時可以建立新的題型）</div>';
@@ -3563,7 +3582,8 @@ function pEdit(pid, copy) {
     '<div class="gi-grid"><div><label>試卷類別 <span style="color:#dc2626">*</span></label><input type="text" id="pe-name" value="' + esc(p.name) + '" placeholder="例如：開發部門、幕僚單位、品管" oninput="peUpdate()"></div>' +
     '<div><label>報告標題</label><input type="text" id="pe-title" value="' + esc(p.title || '') + '" placeholder="留空＝「試卷類別＋能力測驗」"></div></div>' +
     '<div class="pe-sec">題型範圍（勾選這份試卷要出的題型）</div><div class="pe-grp-t">文字題</div><div class="pe-tys">' + txt + '</div><div class="pe-grp-t">圖形空間題</div><div class="pe-tys">' + gfx + '</div><div class="pe-grp-t">自訂題型</div><div class="pe-tys">' + cus + '</div>' +
-    '<label style="display:flex;gap:6px;align-items:center;margin:10px 0;font-size:14px"><input type="checkbox" id="pe-core"' + (p.coreShare ? ' checked' : '') + ' onchange="peUpdate()"> 文字題優先：每種難度約 7 成出文字題（出題機會「較少」的題型和圖形題占其餘 3 成）</label>' +
+    '<div style="font-size:13px;color:#475569;margin:8px 0">「出題數」選幾題，這個題型就固定出幾題；選「自動」的題型，會用下面的難易度題數補滿。</div>' +
+    '<label style="display:flex;gap:6px;align-items:center;margin:10px 0;font-size:14px"><input type="checkbox" id="pe-core"' + (p.coreShare ? ' checked' : '') + ' onchange="peUpdate()"> 文字題優先：「自動」的題目中，每種難度約 7 成出文字題</label>' +
     '<div class="pe-sec">題數、難易度與時間</div><div class="gi-grid">' +
     '<div><label>3D 紙樣拼裝題（0–2 題）</label><input type="number" id="pe-n3" min="0" max="2" value="' + (p.n3 | 0) + '" oninput="peUpdate()"></div>' +
     '<div><label>3D 題難度</label><select id="pe-d3" onchange="peUpdate()">' + D3_TXT.map((t, i) => '<option value="' + i + '"' + ((p.d3 | 0) === i ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>' +
@@ -3585,21 +3605,31 @@ function peRead() {
   const p = window._pe, g = id => document.getElementById(id), n = id => Math.max(0, parseInt(g(id).value, 10) || 0);
   const types = [], w = {};
   document.querySelectorAll('#pp-edit input[data-k]').forEach(i => { const k = i.getAttribute('data-k'); if (i.checked) types.push(/^\d+$/.test(k) ? +k : k); });
-  document.querySelectorAll('#pp-edit select[data-w]').forEach(s => { if (s.value) w[s.getAttribute('data-w')] = s.value; });
+  const cnt = {}; document.querySelectorAll('#pp-edit select[data-c]').forEach(s => { const k = s.getAttribute('data-c'), on = document.querySelector('#pp-edit input[data-k="' + k + '"]'); if (s.value && on && on.checked) cnt[k] = +s.value; });
   const md = document.querySelector('#pp-edit input[name=pe-mode]:checked');
-  const o = Object.assign({}, p, { mode: md && md.value === 'fixed' ? 'fixed' : 'random', names: !!(g('pe-names') && g('pe-names').checked), fixed: p.fixed || null, name: g('pe-name').value.trim(), title: g('pe-title').value.trim(), types: types, w: w, coreShare: g('pe-core').checked ? 0.7 : 0, n3: Math.min(2, n('pe-n3')), d3: parseInt(g('pe-d3').value, 10) || 0, easy: Math.min(35, n('pe-e')), mid: Math.min(35, n('pe-m')), hard: Math.min(35, n('pe-h')) });
+  const o = Object.assign({}, p, { mode: md && md.value === 'fixed' ? 'fixed' : 'random', names: !!(g('pe-names') && g('pe-names').checked), fixed: p.fixed || null, name: g('pe-name').value.trim(), title: g('pe-title').value.trim(), types: types, w: w, cnt: cnt, coreShare: g('pe-core').checked ? 0.7 : 0, n3: Math.min(2, n('pe-n3')), d3: parseInt(g('pe-d3').value, 10) || 0, easy: Math.min(35, n('pe-e')), mid: Math.min(35, n('pe-m')), hard: Math.min(35, n('pe-h')) });
   o.min = window._peMinTouched ? Math.max(1, Math.min(600, n('pe-min') || 45)) : sugMin(o);
   return o;
+}
+function peCnt(sel) {   // 選了題數就自動勾選這個題型
+  const k = sel.getAttribute('data-c'), cb = document.querySelector('#pp-edit input[data-k="' + k + '"]');
+  if (sel.value && cb && !cb.checked) { cb.checked = true; cb.parentNode.classList.add('on'); }
+  peUpdate();
 }
 function peUpdate() {
   const o = peRead(); if (!window._peMinTouched) document.getElementById('pe-min').value = o.min;
   const key = regPaper(o, 'P:_edit'), pc = poolCount(key);
   ['e', 'm', 'h'].forEach((k, i) => { const d = ['easy', 'mid', 'hard'][i], el = document.getElementById('pe-av-' + k); el.textContent = '題庫有 ' + pc[d] + ' 題'; el.style.color = o[d] > pc[d] ? '#dc2626' : '#64748b'; });
-  const tot = o.n3 + Math.min(o.easy, pc.easy) + Math.min(o.mid, pc.mid) + Math.min(o.hard, pc.hard);
+  const tot = paperTotal(o);
   peFixedShow(o);
   document.getElementById('pe-sum').innerHTML = '這份試卷每次會出 <b>' + tot + '</b> 題（' + (o.mode === 'fixed' ? '固定題目，每位應徵者都一樣' : '從勾選的 ' + o.types.length + ' 種題型隨機抽題') + '），作答時間 <b>' + o.min + '</b> 分鐘' + (['easy', 'mid', 'hard'].some(d => o[d] > pc[d]) ? '　<span style="color:#dc2626">紅字的難度題庫不夠，會以題庫現有題數為上限。</span>' : '');
 }
-function peSig(o) { return JSON.stringify([o.n3 | 0, o.d3 | 0, o.easy | 0, o.mid | 0, o.hard | 0, (o.types || []).map(String).sort(), o.w || {}, o.coreShare || 0]); }
+function peSig(o) { return JSON.stringify([o.n3 | 0, o.d3 | 0, o.easy | 0, o.mid | 0, o.hard | 0, (o.types || []).map(String).sort(), o.w || {}, o.coreShare || 0, o.cnt || {}]); }
+function paperTotal(o) {   // 實際會出幾題（指定題數的題型＋自動補滿）
+  const sumC = Object.keys(o.cnt || {}).reduce((a, k) => a + (o.cnt[k] | 0), 0);
+  if (!sumC) { const pc = poolCount(regPaper(o, 'P:_tot')); return (o.n3 | 0) + Math.min(o.easy | 0, pc.easy) + Math.min(o.mid | 0, pc.mid) + Math.min(o.hard | 0, pc.hard); }
+  try { return planFromCfg(paperCfg(Object.assign({}, o, { pid: '_tot' }))).length; } catch (e) { return (o.n3 | 0) + sumC; }
+}
 function peFixedShow(o) {
   const box = document.getElementById('pe-fixed'); if (!box) return;
   if (o.mode !== 'fixed') { box.innerHTML = ''; return; }
@@ -3622,7 +3652,7 @@ function pSave() {
   if (!o.name) { er.textContent = '請輸入試卷類別。'; return; }
   if (livePapers().some(p => p.name === o.name && p.pid !== o.pid)) { er.textContent = '已經有同名的試卷類別，請換一個名稱。'; return; }
   if (o.easy + o.mid + o.hard > 0 && !o.types.length) { er.textContent = '請至少勾選一種題型。'; return; }
-  if (o.n3 + o.easy + o.mid + o.hard < 1) { er.textContent = '至少要有 1 題。'; return; }
+  if (paperTotal(o) < 1) { er.textContent = '至少要有 1 題。'; return; }
   if (!o.pid) { o.pid = 'P' + rid(6); o.ts0 = Date.now(); }
   o.base = paperBase(o); o.fmt = 'ssb-paper'; o.del = false; o.ts2 = Date.now(); o.id = 'paper-' + o.pid + '-' + o.ts2;
   PAPERS[o.pid] = o; savePapers(); sendRecord(o); pClose(); renderPapers();
@@ -3642,7 +3672,7 @@ function pTrial(pid) {
   if (!bankReady()) return;
   if (!pid && !p.name) p.name = '試做';
   const c = paperCfg(Object.assign({}, p, { pid: p.pid || '_trial' }));
-  if (c.n3 + c.easy + c.mid + c.hard < 1) { alert('這份試卷沒有可出的題目。'); return; }
+  if (planLen(c) < 1) { alert('這份試卷沒有可出的題目。'); return; }
   c.code = '管理員試做';
   document.getElementById('view-admin').style.display = 'none'; state.isAdmin = true;
   startApp({ cid: '管理員試做', code: '管理員試做', cfg: c });
@@ -4241,7 +4271,7 @@ function sendRecord(rec) {
       document.getElementById('view-admin').style.display = 'none';
       state.isAdmin = true;
       let c; try { c = genForm(); const pc = poolCount(c.role); ['easy', 'mid', 'hard'].forEach(d => { c[d] = Math.min(c[d], pc[d]); }); } catch (e) { c = Object.assign({ role: 'T', min: 45 }, ROLES.T.def); }
-      if (c.n3 + c.easy + c.mid + c.hard < 1) c = Object.assign({ role: 'T', min: 45 }, ROLES.T.def);
+      if (planLen(c) < 1) c = Object.assign({ role: 'T', min: 45 }, ROLES.T.def);
       c.code = '管理員試做';
       startApp({ cid: '管理員試做', code: '管理員試做', cfg: c });
     }
