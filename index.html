@@ -611,7 +611,8 @@
     function q1Model(S) {
       S = S || Q3D.af1;
       const J = (v, r) => v * (1 + (Math.random() * 2 - 1) * r), SLAB = S.slab;
-      const N = 9, X = S.X0.map((x, i) => i ? J(x, 0.012) : x), ST = S.ST0.map(s => s.map(v => J(v, 0.05)));
+      // 每次稍微改變鞋型：同一欄（寬、高）整體一起變，每站只加很小的變化，鞋面輪廓才會平順（舊版每點各自亂跳，紙樣邊緣會鋸齒狀）
+      const CJ = [0, 1, 2, 3, 4].map(() => J(1, 0.06)), N = 9, X = S.X0.map((x, i) => i ? J(x, 0.004) : x), ST = S.ST0.map(s => s.map((v, c) => J(v * CJ[c], 0.008)));
       const set = a => { const o = {}; (a || []).forEach(k => { o[k] = 1; }); return o; }, OVL = set(S.ovl), TWO = set(S.two), UP = set(S.up), TOP = set(S.top), PLANAR = set(S.planar), KEEP = set(S.keep);
       const P = [], VX = {};
       for (let i = 0; i < N; i++) {
@@ -701,9 +702,23 @@
           const up = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], d = psDot(up, n), v = psNorm([up[0] - n[0] * d, up[1] - n[1] * d, up[2] - n[2] * d]), u = psCross(v, n);
           pts = V.map(p => [psDot(p, u), psDot(p, v)]);
         } else {
-          const sideR = /R$/.test(f.id), top = !!TOP[f.id];
-          const ch = f.chart || (k => { const kk = k.replace(/^o[LR]/, ''), c = CH[kk], i = +/^g(\d+)_/.exec(kk)[1], yt = CH['g' + i + '_6'][1]; return sideR ? [c[0], yt - c[1]] : top ? [c[0], c[1] - yt / 2] : [c[0], c[1]]; });
-          pts = best.map(k => ch(k).slice());
+          // 紙樣形狀：大致朝同一方向的面，用「正對這個面看過去」的投影，紙樣和鞋上缺口看起來比例一致（像拼圖）；
+          // 繞過轉角、彎曲很大的面（例如包住鞋頭的前套）才用展開，並調整到每條邊的實際長度。
+          const myT = tris.filter(t => t.pid === f.id); let an = [0, 0, 0];
+          myT.forEach(t => { const c = psCross(psSub(t.P[1], t.P[0]), psSub(t.P[2], t.P[0])); an = [an[0] + c[0], an[1] + c[1], an[2] + c[2]]; });
+          const nA = psNorm(an), minDot = myT.length ? Math.min.apply(null, myT.map(t => psDot(t.n, nA))) : 0;
+          if (!f.chart && minDot > 0.3) {
+            const n = nA, up = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], d = psDot(up, n), v = psNorm([up[0] - n[0] * d, up[1] - n[1] * d, up[2] - n[2] * d]), u = psCross(v, n);
+            pts = f.loop3.map(p => [psDot(p, u), psDot(p, v)]);
+          } else {
+            const sideR = /R$/.test(f.id), top = !!TOP[f.id];
+            const ch = f.chart || (k => { const kk = k.replace(/^o[LR]/, ''), c = CH[kk], i = +/^g(\d+)_/.exec(kk)[1], yt = CH['g' + i + '_6'][1]; return sideR ? [c[0], yt - c[1]] : top ? [c[0], c[1] - yt / 2] : [c[0], c[1]]; });
+            const pos = {}, E = [], seen = {};
+            f.tris.forEach(t => t.forEach(k => { if (!pos[k]) pos[k] = ch(k).slice(); }));
+            f.tris.forEach(t => [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]].forEach(e => { const key = e[0] < e[1] ? e[0] + '|' + e[1] : e[1] + '|' + e[0]; if (seen[key]) return; seen[key] = 1; E.push([e[0], e[1], psLen(psSub(VX[e[0]], VX[e[1]]))]); }));
+            for (let it = 0; it < 300; it++) E.forEach(e => { const a = pos[e[0]], b = pos[e[1]], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1e-6, k = (L - e[2]) / L * 0.5; a[0] += dx * k; a[1] += dy * k; b[0] -= dx * k; b[1] -= dy * k; });
+            pts = best.map(k => pos[k].slice());
+          }
         }
         let ar = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; ar += p[0] * q[1] - q[0] * p[1]; }
         if (ar < 0) pts = pts.map(p => [p[0], -p[1]]);
@@ -717,7 +732,7 @@
           const deg = ((th * 180 / Math.PI) % 360 + 360) % 360; f.natRot = (Math.round(deg / 45) * 45) % 360; f.natDev = Math.abs(deg - Math.round(deg / 45) * 45); f.natRes = nR / (nB || 1);
           f.wrap = !!TOP[f.id] || f.natDev > 14 || f.natRes > 0.3; }
         // 去掉幾乎共線的點（圓形飾釦保留全部頂點）
-        let chg = !KEEP[f.id]; while (chg && pts.length > 4) { chg = false; for (let i = 0; i < pts.length; i++) { const a = pts[(i + pts.length - 1) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length], dx = c[0] - a[0], dy = c[1] - a[1], L = Math.hypot(dx, dy) || 1, d = Math.abs((b[0] - a[0]) * dy - (b[1] - a[1]) * dx) / L; if (d < 1.6) { pts.splice(i, 1); chg = true; break; } } }
+        let chg = !KEEP[f.id]; while (chg && pts.length > 4) { chg = false; for (let i = 0; i < pts.length; i++) { const a = pts[(i + pts.length - 1) % pts.length], b = pts[i], c = pts[(i + 1) % pts.length], dx = c[0] - a[0], dy = c[1] - a[1], L = Math.hypot(dx, dy) || 1, d = Math.abs((b[0] - a[0]) * dy - (b[1] - a[1]) * dx) / L; if (d < 2.2) { pts.splice(i, 1); chg = true; break; } } }
         f.pat = { pts: pts, fold: null };
         { const m = [0, 0]; pts.forEach(p => { m[0] += p[0] / pts.length; m[1] += p[1] / pts.length; });
           const Q = pts.map(p => [p[0] - m[0], -(p[1] - m[1])]); let dg = 0; Q.forEach(p => { dg = Math.max(dg, Math.hypot(p[0], p[1])); });
@@ -1504,7 +1519,7 @@
       3: { title: '圖形矩陣規律推理', cat: 'logic' }, 4: { title: '缺口填入（直線形狀）', cat: 'shape' },
       5: { title: '缺口填入（含圓弧）', cat: 'shape' }, 6: { title: '立方體展開圖', cat: 'fold' },
       7: { title: '立體心像旋轉', cat: 'rotate' }, 8: { title: '立方體堆疊計數', cat: 'visual' },
-      9: { title: '側視圖／俯視圖判斷', cat: 'visual' }, 11: { title: '立體方塊矩陣', cat: 'rotate' }, 12: { title: '立體心像旋轉（選出相同的積木）', cat: 'rotate' }, 10: { title: '圖形矩陣（進階）', cat: 'logic' }
+      9: { title: '側視圖／俯視圖判斷', cat: 'visual' }, 11: { title: '立體方塊矩陣', cat: 'rotate' }, 12: { title: '立體心像旋轉（選出相同的積木）', cat: 'rotate' }, 15: { title: '產品爆炸圖（零件組合）', cat: 'visual' }, 10: { title: '圖形矩陣（進階）', cat: 'logic' }
     };
     let TOTAL_Q = 16;
     const QINFO = [];     // 每次測驗開始時依抽題結果建立
@@ -3004,6 +3019,141 @@ const ORIG_Q3_OPTS = ["<svg width=\"45\" height=\"45\" viewBox=\"0 0 50 50\"> <p
     bk(12, 4, 'mid', '心像旋轉：6 個方塊，6 選 2，含 1 個鏡像選項', () => genMR2({ n: 6, nopt: 6, k: 2, mir: 1, mod: 3, chiral: true }));
     bk(12, 5, 'hard', '心像旋轉：7 個方塊，6 選 2，含 2 個鏡像選項', () => genMR2({ n: 7, nopt: 6, k: 2, mir: 2, mod: 2, chiral: true }));
     bk(12, 6, 'hard', '心像旋轉：7 個方塊，8 選 3，含 2 個鏡像選項', () => genMR2({ n: 7, nopt: 8, k: 3, mir: 2, mod: 3, chiral: true }));
+    // ---------- 第 15 型：產品爆炸圖（看爆炸圖，選出組合完成後的產品） ----------
+    const EX_COL = [
+      { n: '橘色', top: '#fed7aa', left: '#fb923c', right: '#c2410c' },
+      { n: '藍色', top: '#bfdbfe', left: '#60a5fa', right: '#1d4ed8' },
+      { n: '綠色', top: '#bbf7d0', left: '#4ade80', right: '#15803d' },
+      { n: '紫色', top: '#e9d5ff', left: '#c084fc', right: '#7e22ce' }
+    ];
+    // 每個方塊各自上色的等角圖（畫法與 isoSVG 相同）；arrows：[{from:[x,y,z], to:[x,y,z], c}]
+    function isoColorSVG(L, s, w, h, arrows) {
+      const P = (x, y, z) => [(x - y) * 0.866 * s, (x + y) * 0.5 * s - z * s];
+      const cubes = L.slice().sort((a, b) => (a.v[0] + a.v[1] + a.v[2]) - (b.v[0] + b.v[1] + b.v[2]));
+      const polys = []; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      const add = (pts, fill) => { pts.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }); polys.push([pts, fill]); };
+      cubes.forEach(c => {
+        const x = c.v[0], y = c.v[1], z = c.v[2], col = EX_COL[c.c];
+        add([P(x, y, z + 1), P(x + 1, y, z + 1), P(x + 1, y + 1, z + 1), P(x, y + 1, z + 1)], col.top);
+        add([P(x, y + 1, z), P(x + 1, y + 1, z), P(x + 1, y + 1, z + 1), P(x, y + 1, z + 1)], col.left);
+        add([P(x + 1, y, z), P(x + 1, y + 1, z), P(x + 1, y + 1, z + 1), P(x + 1, y, z + 1)], col.right);
+      });
+      const ar = (arrows || []).map(a => ({ a: P.apply(null, a.from), b: P.apply(null, a.to), c: a.c }));
+      ar.forEach(a => [a.a, a.b].forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }));
+      const sc = Math.min(1, (w - 8) / (x1 - x0 || 1), (h - 8) / (y1 - y0 || 1)), ox = w / 2 - (x0 + x1) / 2 * sc, oy = h / 2 - (y0 + y1) / 2 * sc;
+      const T = p => [p[0] * sc + ox, p[1] * sc + oy];
+      let out = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+      out += polys.map(q => '<polygon points="' + ptsStr(q[0].map(T)) + '" fill="' + q[1] + '" stroke="#1e293b" stroke-width="1.1" stroke-linejoin="round"/>').join('');
+      ar.forEach(a => {
+        const A = T(a.a), B = T(a.b), dx = B[0] - A[0], dy = B[1] - A[1], Ln = Math.hypot(dx, dy) || 1, ux = dx / Ln, uy = dy / Ln, col = EX_COL[a.c].right;
+        const hp = [[B[0], B[1]], [B[0] - ux * 12 - uy * 6, B[1] - uy * 12 + ux * 6], [B[0] - ux * 12 + uy * 6, B[1] - uy * 12 - ux * 6]];
+        out += '<line x1="' + A[0].toFixed(1) + '" y1="' + A[1].toFixed(1) + '" x2="' + (B[0] - ux * 8).toFixed(1) + '" y2="' + (B[1] - uy * 8).toFixed(1) + '" stroke="' + col + '" stroke-width="3.5" stroke-dasharray="7 5" stroke-linecap="round"/><polygon points="' + ptsStr(hp) + '" fill="' + col + '"/>';
+      });
+      return out + '</svg>';
+    }
+    // 看得到的面（含顏色）做成簽章：兩張圖簽章相同＝畫面看起來完全一樣
+    function exSig(L) {
+      const occ = new Set(L.map(c => vkey(c.v)));
+      const hit = (x, y, z) => occ.has(vkey([Math.floor(x), Math.floor(y), Math.floor(z)]));
+      const Pj = (x, y, z) => [(x - y) * 0.866, (x + y) * 0.5 - z];
+      const faces = []; let hidden = false, x0 = 1e9, y0 = 1e9;
+      L.forEach(c => { const p = Pj(c.v[0], c.v[1], c.v[2] + 1); x0 = Math.min(x0, p[0] - 1); y0 = Math.min(y0, p[1] - 1); });
+      L.forEach(c => {
+        const x = c.v[0], y = c.v[1], z = c.v[2]; let any = false;
+        [['t', x + .5, y + .5, z + 1], ['l', x + .5, y + 1, z + .5], ['r', x + 1, y + .5, z + .5]].forEach(f => {
+          let blocked = false; for (let t = 0.03; t < 12; t += 0.1) { if (hit(f[1] + t, f[2] + t, f[3] + t)) { blocked = true; break; } }
+          if (!blocked) { any = true; const p = Pj(f[1], f[2], f[3]); faces.push(f[0] + c.c + ':' + Math.round((p[0] - x0) * 20) + ',' + Math.round((p[1] - y0) * 20)); }
+        });
+        if (!any) hidden = true;
+      });
+      return { hidden: hidden, sig: faces.sort().join('|') };
+    }
+    function exPartition(V, k) {   // 把產品切成 k 個相連的零件（每個至少 3 塊）
+      for (let t = 0; t < 200; t++) {
+        const own = {}, seeds = shuffled(V).slice(0, k), sizes = new Array(k).fill(0), front = seeds.map(s => [s]);
+        seeds.forEach((s, i) => { own[vkey(s)] = i; sizes[i] = 1; });
+        let left = V.length - k, guard = 0;
+        while (left > 0 && guard++ < 5000) {
+          const i = sizes.indexOf(Math.min.apply(null, sizes.map((z, j) => front[j].length ? z : 1e9))); if (i < 0 || !front[i].length) break;
+          const b = front[i][rnd(front[i].length)], d = BOX_DIRS[rnd(6)], c = [b[0] + d[0], b[1] + d[1], b[2] + d[2]];
+          if (V.some(v => vkey(v) === vkey(c)) && own[vkey(c)] == null) { own[vkey(c)] = i; sizes[i]++; front[i].push(c); left--; }
+          else if (rnd(8) === 0) { const nb = front[i].filter(q => BOX_DIRS.some(dd => { const cc = [q[0] + dd[0], q[1] + dd[1], q[2] + dd[2]]; return V.some(v => vkey(v) === vkey(cc)) && own[vkey(cc)] == null; })); front[i] = nb; }
+        }
+        if (left > 0 || sizes.some(z => z < 3)) continue;
+        const parts = []; for (let i = 0; i < k; i++) parts.push(V.filter(v => own[vkey(v)] === i));
+        if (parts.every(isConnected)) return parts;
+      }
+      return null;
+    }
+    function genExplode(cfg) {
+      const shift = (P, d) => P.map(v => [v[0] + d[0], v[1] + d[1], v[2] + d[2]]);
+      const minC = P => [0, 1, 2].map(i => Math.min.apply(null, P.map(v => v[i])));
+      const rotZ = (V, k) => { let R = V.map(v => v.slice()); for (let i = 0; i < k; i++) R = R.map(v => [-v[1], v[0], v[2]]); const m = minC(R); return R.map(v => [v[0] - m[0], v[1] - m[1], v[2] - m[2]]); };
+      for (let t = 0; t < 600; t++) {
+        const h = genHeightsG(cfg.W, cfg.D, cfg.H, cfg.tmin, cfg.tmax); if (!h) continue;
+        const V = heightsToVoxG(h); if (!isConnected(V)) continue;
+        const parts = exPartition(V, cfg.k); if (!parts) continue;
+        if (parts.some((p, i) => parts.some((q, j) => j !== i && canonVox(p) === canonVox(q)))) continue;   // 零件形狀不要重複
+        // 爆炸方向：每個零件沿著「離產品中心最遠的方向」拉開；不同零件用不同方向
+        const cen = [0, 1, 2].map(i => V.reduce((a, v) => a + v[i] + 0.5, 0) / V.length);
+        const dirs = [[4, 0, 0], [0, 4, 0], [0, 0, 4], [-4, 0, 0], [0, -4, 0]], usedD = new Set(), off = [];
+        const order = parts.map((p, i) => i).sort((a, b) => Math.max.apply(null, parts[b].map(v => v[2])) - Math.max.apply(null, parts[a].map(v => v[2])));
+        let okD = true;
+        order.forEach(i => {
+          const pc = [0, 1, 2].map(a => parts[i].reduce((s, v) => s + v[a] + 0.5, 0) / parts[i].length), dv = [pc[0] - cen[0], pc[1] - cen[1], (pc[2] - cen[2]) * 1.6];
+          const rank = dirs.map((d, j) => ({ j: j, s: (d[0] * dv[0] + d[1] * dv[1] + d[2] * dv[2]) + Math.random() * 0.4 })).filter(x => !usedD.has(x.j)).sort((a, b) => b.s - a.s);
+          if (!rank.length || rank[0].s <= 0) { okD = false; return; }
+          usedD.add(rank[0].j); off[i] = dirs[rank[0].j];
+        });
+        if (!okD || off.filter(Boolean).length < cfg.k) continue;   // 每個零件都要拉開
+        off.forEach((d, i) => { if (!d) off[i] = [0, 0, 0]; });
+        const exL = []; parts.forEach((p, i) => shift(p, off[i]).forEach(v => exL.push({ v: v, c: i })));
+        if (new Set(exL.map(c => vkey(c.v))).size !== exL.length || exSig(exL).hidden) continue;   // 拉開後零件不能重疊，也不能有方塊被擋住
+        // 選項：組合後的產品（hard 版本：整個產品水平轉 180°，等於從背面看）
+        const view = L => cfg.turn ? (() => { const R = rotZ(L.map(c => c.v), 2), m0 = minC(L.map(c => c.v)); return L.map((c, i) => ({ v: R[i], c: c.c })); })() : L;
+        const asm = ps => { const L = []; ps.forEach((p, i) => p.forEach(v => L.push({ v: v, c: i }))); return L; };
+        const okL = asm(parts), okS = exSig(view(okL)).sig;
+        const sigs = new Set([okS]), bad = [];
+        const tryBad = (kind, make) => {
+          for (let r = 0; r < 40; r++) {
+            const i = rnd(cfg.k), m = make(parts[i]); if (!m || canonVox(m) === canonVox(parts[i]) && kind !== 'rot') continue;
+            const base = minC(parts[i]), mm = minC(m), np = m.map(v => [v[0] - mm[0] + base[0], v[1] - mm[1] + base[1], v[2] - mm[2] + base[2]]);
+            const ps = parts.map((p, j) => j === i ? np : p), L = asm(ps);
+            if (new Set(L.map(c => vkey(c.v))).size !== L.length || L.some(c => c.v[2] < 0)) continue;   // 零件互相重疊的不要
+            const sg = exSig(view(L)); if (sigs.has(sg.sig)) continue;
+            sigs.add(sg.sig); bad.push({ L: L, kind: kind === 'mir' && canonVox(m) === canonVox(parts[i]) ? 'rot' : kind, part: i }); return true;
+          }
+          return false;
+        };
+        const kinds = shuffled(cfg.kinds.slice());
+        kinds.forEach(kd => { if (bad.length >= cfg.nopt - 1) return; if (kd === 'mir') tryBad('mir', p => mirrorVox(p)); else if (kd === 'rot') tryBad('rot', p => rotZ(p, 1 + rnd(3))); else tryBad('move', p => { const q = modifyVox(p); return canonVox(q) === canonVox(p) ? null : q; }); });
+        while (bad.length < cfg.nopt - 1) { if (!tryBad('move', p => { const q = modifyVox(p); return canonVox(q) === canonVox(p) ? null : q; })) break; }
+        if (bad.length < cfg.nopt - 1) continue;
+        const items = shuffled([{ ok: true, L: okL }].concat(bad.map(b => ({ ok: false, L: b.L, kind: b.kind, part: b.part }))));
+        const keys = 'ABCDEF'.split('').slice(0, cfg.nopt);
+        const r = makeOptions(items, keys, it => isoColorSVG(view(it.L), 24, 170, 150));
+        const arrows = parts.map((p, i) => {   // 箭頭畫在「拉開的零件」和「組合位置」之間的空隙
+          const d = off[i]; if (!d[0] && !d[1] && !d[2]) return null;
+          const L0 = Math.hypot(d[0], d[1], d[2]), u = d.map(x => x / L0), pc = [0, 1, 2].map(a => p.reduce((s2, v) => s2 + v[a] + 0.5, 0) / p.length);
+          const ext = Math.max.apply(null, p.map(v => (v[0] + 0.5 - pc[0]) * u[0] + (v[1] + 0.5 - pc[1]) * u[1] + (v[2] + 0.5 - pc[2]) * u[2])) + 0.5;
+          const fr = [0, 1, 2].map(a => pc[a] + d[a] - u[a] * (ext + 0.2));
+          return { from: fr, to: fr.map((x, a) => x - u[a] * 1.9), c: i };   // 從零件指向組合位置，固定長度
+        }).filter(Boolean);
+        const kindTxt = { mir: '被左右鏡像（形狀反過來）', rot: '被轉了方向', move: '有一塊方塊的位置不一樣' };
+        return {
+          n: 15, wide: false, cols: 2, correct: r.correct, options: r.options,
+          title: '產品爆炸圖（零件組合）',
+          desc: '左圖是一個產品的<b>爆炸圖</b>：產品拆成 ' + cfg.k + ' 個零件（用不同顏色表示），虛線箭頭表示每個零件<b>沿著箭頭平移</b>回去組合（零件不會旋轉、不會翻面）。' + (cfg.turn ? '右邊的選項是組合完成後，<b>把產品水平轉 180°（從背面）</b>看到的樣子。' : '右邊的選項是組合完成後，從同一個角度看到的樣子。') + '請選出正確組合完成的產品。',
+          prompt: cfg.turn ? '組合完成並轉 180° 後，是哪一個？' : '組合完成後是哪一個？',
+          preview: '<div style="text-align:center"><div style="font-weight:700;color:#334155;margin-bottom:4px">爆炸圖</div>' + isoColorSVG(exL, 26, 400, 340, arrows) + '</div>',
+          explain: () => '<b class="k">解析：</b>把每個零件沿箭頭推回去，' + (cfg.turn ? '再把整個產品水平轉 180°（原本在左前方的面會跑到右後方），' : '') + '答案是 (' + r.correct + ')。其他選項：' + items.map((it, i) => it.ok ? null : '(' + keys[i] + ') ' + EX_COL[it.part].n + '零件' + kindTxt[it.kind]).filter(Boolean).join('；') + '。<br><b class="k">解題技巧：</b>一次只看一個顏色的零件，找出它最特別的地方（突出的一塊、轉角），確認它在組合後的位置與方向；' + (cfg.turn ? '轉 180° 時，前後、左右都會對調。' : '爆炸圖的零件只會平移，所以形狀和方向都不會變。')
+        };
+      }
+      return genRotation3D();
+    }
+    bk(15, 1, 'mid', '產品爆炸圖：3 個零件，選出組合後的產品（4 選 1）', () => genExplode({ W: 3, D: 3, H: 3, tmin: 13, tmax: 18, k: 3, nopt: 4, kinds: ['mir', 'rot', 'move'], turn: false }));
+    bk(15, 2, 'hard', '產品爆炸圖：4 個零件，選出組合後的產品（6 選 1）', () => genExplode({ W: 3, D: 4, H: 3, tmin: 18, tmax: 24, k: 4, nopt: 6, kinds: ['mir', 'rot', 'move', 'move', 'mir'], turn: false }));
+    bk(15, 3, 'hard', '產品爆炸圖：3 個零件，選項從背面看（組合後轉 180°）', () => genExplode({ W: 3, D: 3, H: 3, tmin: 13, tmax: 18, k: 3, nopt: 4, kinds: ['mir', 'rot', 'move'], turn: true }));
     ['Q4-2', 'Q5-2', 'Q4-4', 'Q9-3', 'Q5-4', 'Q6-5'].forEach(id => { const i = BANK.findIndex(b => b.id === id); if (i >= 0) BANK.splice(i, 1); });
 
     // ================= 管理員後台與作答檔 =================
@@ -3014,7 +3164,7 @@ const ORIG_Q3_OPTS = ["<svg width=\"45\" height=\"45\" viewBox=\"0 0 50 50\"> <p
 // ================= 職務別題庫（文字選擇題） =================
 const RQM = [[21,"easy"],[21,"easy"],[21,"easy"],[21,"easy"],[21,"mid"],[21,"mid"],[21,"mid"],[21,"mid"],[21,"hard"],[21,"hard"],[21,"hard"],[22,"easy"],[22,"easy"],[22,"easy"],[22,"mid"],[22,"mid"],[22,"mid"],[22,"mid"],[22,"hard"],[22,"hard"],[22,"hard"],[23,"easy"],[23,"easy"],[23,"mid"],[23,"mid"],[23,"mid"],[23,"hard"],[23,"hard"],[24,"easy"],[24,"easy"],[24,"mid"],[24,"mid"],[24,"hard"],[24,"hard"],[25,"easy"],[25,"easy"],[25,"mid"],[25,"mid"],[25,"hard"],[25,"hard"],[26,"easy"],[26,"easy"],[26,"mid"],[26,"mid"],[26,"hard"],[26,"hard"],[27,"easy"],[27,"easy"],[23,"easy"],[23,"easy"],[23,"easy"],[23,"mid"],[23,"mid"],[30,"easy"],[30,"easy"],[30,"easy"],[30,"mid"],[30,"mid"],[30,"hard"],[30,"hard"],[23,"easy"],[23,"easy"],[23,"mid"],[23,"mid"],[23,"mid"],[23,"hard"],[23,"hard"],[31,"easy"],[31,"easy"],[31,"easy"],[31,"easy"],[31,"mid"],[31,"mid"],[31,"mid"],[31,"mid"],[31,"hard"],[31,"hard"],[31,"hard"],[31,"hard"],[31,"hard"],[25,"easy"],[25,"easy"],[25,"mid"],[25,"mid"],[25,"hard"],[25,"hard"],[25,"hard"],[26,"easy"],[26,"easy"],[26,"easy"],[26,"mid"],[26,"mid"],[26,"mid"],[26,"mid"],[26,"hard"],[26,"hard"],[26,"hard"],[27,"mid"],[27,"mid"],[27,"mid"],[27,"mid"],[27,"hard"],[27,"hard"],[27,"hard"],[27,"hard"],[27,"hard"],[30,"easy"],[30,"easy"],[30,"easy"],[30,"mid"],[30,"mid"],[30,"mid"],[30,"hard"],[30,"hard"],[30,"hard"],[32,"easy"],[32,"easy"],[32,"easy"],[32,"mid"],[32,"mid"],[32,"mid"],[32,"mid"],[32,"hard"],[32,"hard"],[32,"hard"],[33,"easy"],[33,"easy"],[33,"easy"],[33,"easy"],[33,"mid"],[33,"mid"],[33,"mid"],[33,"mid"],[33,"hard"],[33,"hard"],[33,"hard"],[34,"easy"],[34,"easy"],[34,"easy"],[34,"mid"],[34,"mid"],[34,"mid"],[34,"hard"],[34,"hard"],[34,"hard"],[34,"hard"]];   // 文字題只留題型與難度；題目內容存在雲端，登入或輸入邀請碼後才取得
 const ROLES = {
-  T: { name: '技術幹部', test: '空間圖形能力測驗', sub: '鞋樣開版・拼版與圖形概念', slots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], def: { n3: 2, d3: 0, easy: 5, mid: 5, hard: 4 } },
+  T: { name: '技術幹部', test: '空間圖形能力測驗', sub: '鞋樣開版・拼版與圖形概念', slots: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15], def: { n3: 2, d3: 0, easy: 5, mid: 5, hard: 4 } },
   D: { name: '開發部門', test: '開發人員能力測驗', sub: '規格書判讀・鞋類專業・英文用語・用料計算・開發情境判斷・空間圖形・邏輯推理', slots: [21, 22, 32, 33, 34, 2, 3, 4, 5, 6, 7, 9], coreShare: 0.7, light: { 25: 0.5, 31: 0.5 }, def: { n3: 1, d3: 0, easy: 4, mid: 4, hard: 3 } },
   S: { name: '幕僚單位', test: '幕僚人員能力測驗', sub: '細心度・數字計算・數列與邏輯推理・資料判讀・情境判斷・工廠安全', slots: [23, 24, 25, 26, 27, 30, 31, 3, 10], prefer: { 26: 2 }, def: { n3: 0, d3: 0, easy: 5, mid: 5, hard: 5 } }
 };
@@ -3172,7 +3322,7 @@ function admFiltered() {
 // 試卷：管理員先設定好「試卷類別」（題型範圍、題數、難易度、作答時間），產生邀請碼時再指定要測哪一份試卷。
 // 題目：內建文字題可以修改／刪除；圖形題由程式自動產生，只能刪除（停用）或恢復；也可以自行新增選擇題。
 let PAPERS = {}, QB = {}, CT = {};
-const GFX_SLOTS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const GFX_SLOTS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15];
 const TXT_SLOTS = [21, 22, 32, 33, 34, 23, 24, 25, 31, 26, 27, 30];
 const D3_TXT = ['隨機', '簡單', '中等', '困難'];
 function sugMin(c) { return Math.max(5, Math.ceil(((c.n3 || 0) * 10 + (c.easy || 0) * 1.5 + (c.mid || 0) * 2.5 + (c.hard || 0) * 3.5) / 5) * 5); }
