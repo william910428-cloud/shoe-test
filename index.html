@@ -552,7 +552,7 @@
       X0: [0, 24, 54, 90, 126, 162, 198, 236, 276],
       ST0: [[24, 36, 23, 76, 80], [32, 40, 29, 74, 26], [40, 42, 36, 70, 24], [46, 44, 40, 68, 26], [49, 44, 42, 66, 66], [50, 44, 41, 64, 66], [50, 44, 40, 62, 62], [48, 44, 38, 58, 58], [34, 38, 28, 42, 44]],
       DX0: { 0: [4, 0, -2, -7, -2, 0, 4], 8: [-6, -2, 3, 10, 3, -2, -6] },
-      TOK: {"0":["HH","HH","HH","SS","SS","SS","TS","TT"],"1":["HH","HH","HH","SS","SS","SS","TT","TT"],"2":["CC","CC","VV","VV","VV","VV","VV","TT"]},
+      TOK: {"0":["HH","HH","HH","SS","SS","SS","SS","SS"],"1":["HH","HH","HH","SS","SS","SS","SS","SS"],"2":["CC","CC","VV","VV","VV","VV","VV","TT"]},
       ORN: null,
       NAME: { sole: '大底', heel: '後跟片', tab: '後飾片', slabL: '中底（左）', slabR: '中底（右）', hcL: '後套（左）', hcR: '後套（右）', clL: '鞋口（左）', clR: '鞋口（右）', sdL: '側片（左）', sdR: '側片（右）', tcap: '鞋頭片', eyL: '眼套（左）', eyR: '眼套（右）', tongue: '鞋舌' },
       OPP: { slabL: 'slabR', slabR: 'slabL', hcL: 'hcR', hcR: 'hcL', clL: 'clR', clR: 'clL', sdL: 'sdR', sdR: 'sdL', eyL: 'eyR', eyR: 'eyL' },
@@ -578,7 +578,7 @@
       X0: [0, 24, 50, 84, 118, 152, 186, 222, 262],
       ST0: [[22, 30, 21, 62, 66], [29, 32, 27, 60, 22], [35, 33, 32, 56, 20], [40, 34, 35, 53, 20], [42, 34, 36, 52, 52], [43, 34, 35, 50, 52], [43, 32, 34, 46, 48], [41, 30, 31, 40, 42], [26, 20, 20, 28, 31]],
       DX0: { 0: [3, 0, -2, -6, -2, 0, 3], 8: [-6, -2, 3, 9, 3, -2, -6] },
-      TOK: {"0":["RR","RR","RR","FF","FF","TT","TT","TT"],"1":["RR","RR","RR","FF","FF","FF","FF","TT"],"2":["CC","CC","CC","EE","EE","EE","EE","TT"]},
+      TOK: {"0":["RR","RR","RR","FF","FF","FF","FF","FF"],"1":["RR","RR","RR","FF","FF","FF","FF","FF"],"2":["CC","CC","CC","EE","EE","EE","EE","TT"]},
       ORN: null,
       NAME: { sole: '大底', slabL: '中底（左）', slabR: '中底（右）', rsL: '後套（左）', rsR: '後套（右）', clL: '鞋口（左）', clR: '鞋口（右）', fsL: '飾片（左）', fsR: '飾片（右）', eyL: '眼套（左）', eyR: '眼套（右）',
         tcap: '前套', tab: '後拉片', dcL: '飾釦（左）', dcR: '飾釦（右）', tongue: '鞋舌' },
@@ -766,7 +766,7 @@
     }
     function q1Make(cfg, S) {
       for (let tries = 0; tries < 300; tries++) {
-        const M = q1Model(S), tg = shuffled(M.faces).slice(0, cfg.holes), tgIds = new Set(tg.map(f => f.id)), sheet = tg.map(f => f.pat.pts), dec = [];
+        const M = q1Model(S), tg = shuffled(M.faces.filter(f => !Q1_NOHOLE[f.id])).slice(0, cfg.holes), tgIds = new Set(tg.map(f => f.id)), sheet = tg.map(f => f.pat.pts), dec = [];
         const noName = !q1Names();   // 不顯示名稱時：多餘紙樣翻面後也不能和真紙樣一樣，否則只能用猜的
         const far0 = pts => sheet.concat(dec.map(d => d.pts)).every(q => psDist(pts, q) >= 0.09);
         const far = pts => far0(pts) && (!noName || far0(psMir(pts)));
@@ -774,7 +774,7 @@
         let nm = noName ? 0 : (cfg.mirrorDecoys || 0);      // 鏡像陷阱：左右對稱的另一側紙樣（只在顯示名稱時使用）
         shuffled(tg).forEach(f => { if (nm > 0 && f.opp && !tgIds.has(f.opp) && tryAdd(M.byId[f.opp].pat.pts, f.opp)) nm--; });
         if (nm > 0) continue;
-        shuffled(M.faces.filter(f => !tgIds.has(f.id))).forEach(f => { if (dec.length < cfg.decoys) tryAdd(f.pat.pts, f.id); });
+        shuffled(M.faces.filter(f => !tgIds.has(f.id) && !Q1_NOHOLE[f.id])).forEach(f => { if (dec.length < cfg.decoys) tryAdd(f.pat.pts, f.id); });
         for (let g = 0; g < 80 && dec.length < cfg.decoys; g++) {
           const t = tg[rnd(tg.length)], pts = q1Perturb(t.pat.pts), nmx = S.pool.find(n => !dec.some(d => d.nid === 'x' + n));
           if (nmx && far(pts) && far(psMir(pts))) dec.push({ pts: pts, nid: 'x' + nmx, name: nmx });
@@ -803,6 +803,8 @@
       Q1V.az = Q1V.azT = -32; Q1V.el = Q1V.elT = 32;
     }
 
+    // 鞋口（往鞋子內側捲進去的那一圈）形狀扭曲，攤平後看起來不像，固定組好、不出成缺口
+    const Q1_NOHOLE = { clL: 1, clR: 1 };
     function q1Names() { const P = (state.cfg && state.cfg.paper) || {}; return !!P.names; }   // 試卷設定「紙樣顯示名稱」（預設不顯示）
     function q1Inner(pts) {   // 多邊形內部「最深」的點（凹形紙樣的重心可能在外面，名稱與點選都用這個點）
       let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; pts.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); });
