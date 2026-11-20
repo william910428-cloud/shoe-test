@@ -3328,9 +3328,34 @@ function mcq(it) {
 function txtStub() { return { title: '', desc: '題目內容由雲端提供。', preview: '<div class="txt-q" style="color:#94a3b8">題目內容載入中…（需要網路連線並登入後台）</div>', prompt: '', options: [], correct: 'A', cols: 1, wide: true, txt: true, explain: () => '' }; }
 (function () { const c = {}; RQM.forEach(m => { c[m[0]] = (c[m[0]] || 0) + 1; bk(m[0], c[m[0]], m[1], TYPE_INFO[m[0]].title + '（內容載入中…）', txtStub); BANK[BANK.length - 1].txt = true; }); })();
 let BANK_TXT = false;
+// 英文鞋業用語（本機內建，不需要雲端）：後套部位名稱、品質缺點用語
+(function () {
+  const L = [
+    ['easy', '鞋業英文「Get mildew」是指什麼？', ['發黴', '起毛', '脫膠', '褪色'], 'Get mildew＝發黴（mildew 是黴菌）；起毛是 Hairy，脫膠是 Cement comes off。'],
+    ['easy', '鞋業英文「Cement comes off」是指什麼？', ['脫膠', '後跟溢膠', '鞋頭陷下去', '不配雙'], 'Cement 是膠，comes off 是脫落，所以是「脫膠」；後跟溢膠是 Cement on heel。'],
+    ['easy', '「不配雙」的英文是？', ['Not in pair', 'Toe broken down', 'Vamp open up', 'Hairy'], '不配雙＝Not in pair（左右腳不是同一雙）；Toe broken down 是鞋頭陷下去，Vamp open up 是鞋面掀開，Hairy 是起毛。'],
+    ['easy', '驗貨報告寫「Hairy」，是指哪一種缺點？', ['起毛', '發黴', '清潔度不夠', '鞋面皺折'], 'Hairy＝起毛（材料表面起絨、起毛球）。'],
+    ['mid', '鞋業英文「Heel cap lining」是指什麼？', ['後套內裡', '後套補強', '後套飾片', '後套省料'], 'Lining＝內裡，所以 Heel cap lining＝後套內裡；後套補強是 Heel cap reinforcement，後套飾片是 Heel cap underlay，後套省料是 Heel extension。'],
+    ['mid', '「後套飾片」的英文是？', ['Heel cap underlay', 'Heel cap', 'Heel cap reinforcement', 'Heel extension'], '後套飾片＝Heel cap underlay；Heel cap 是後套本身，Heel cap reinforcement 是後套補強，Heel extension 是後套省料。'],
+    ['mid', '驗貨報告寫「Cement on heel」，是指什麼？', ['後跟溢膠', '後跟脫膠', '後跟接著力不夠', '後套補強'], 'Cement on heel＝膠沾在後跟上，也就是後跟溢膠；脫膠是 Cement comes off，接著力不夠是 Cement not good。'],
+    ['mid', '驗貨報告寫「Vamp wrinkle」，是指什麼？', ['鞋面皺折', '鞋面掀開', '鞋頭陷下去', '鞋面起毛'], 'Vamp＝鞋面，wrinkle＝皺折；鞋面掀開是 Vamp open up，鞋頭陷下去是 Toe broken down。'],
+    ['mid', '鞋業英文「No-sew」是指什麼工法？', ['熱壓（無車縫）', '跳線', '漏車（鞋面未車縫完成）', '手工縫製'], 'No-sew＝不用車縫，用熱壓方式把材料貼合，也就是「熱壓（無車縫）」。'],
+    ['mid', '驗貨報告寫「Color not matching」，是指什麼？', ['顏色不配合', '不配雙', '發黴', '清潔度不夠'], 'Color not matching＝顏色不配合（顏色和樣品或另一隻鞋對不上）；不配雙是 Not in pair。'],
+    ['hard', '鞋業英文「Heel cap underlay reinforcement」是指什麼？', ['後套飾片補強', '後套補強', '後套飾片', '後套內裡'], 'Heel cap underlay＝後套飾片，再加 reinforcement（補強），就是「後套飾片補強」；只有 Heel cap reinforcement 是後套補強。'],
+    ['hard', '客戶意見：「<b>Sole laying not proper, cement on heel.</b>」是指什麼問題？', ['貼底不正確，後跟有溢膠', '大底尺寸不對，後跟脫膠', '貼底不正確，後跟接著力不夠', '大底放錯腳，後跟溢膠'], 'Sole laying not proper＝貼底不正確；Cement on heel＝後跟溢膠。後跟脫膠是 Cement comes off，接著力不夠是 Cement not good。'],
+    ['hard', '驗貨報告：「<b>Toe broken down and cement not good.</b>」應該怎麼理解？', ['鞋頭陷下去，接著力不夠', '鞋頭破損，脫膠', '鞋頭翹起，溢膠', '鞋頭陷下去，清潔度不夠'], 'Toe broken down＝鞋頭陷下去（不是破損）；Cement not good＝接著力不夠。清潔度不夠是 Cleanness not enough。'],
+    ['hard', '下列哪一組中英對照是<b>錯誤</b>的？', ['後套省料－Heel cap', '起毛－Hairy', '清潔度不夠－Cleanness not enough', '鞋面掀開－Vamp open up'], '後套省料的英文是 Heel extension；Heel cap 是後套。其他三組都正確。']
+  ];
+  const n0 = BANK.filter(b => b.slot === 33).length;
+  L.forEach((r, i) => {
+    const it = { q: r[1], o: r[2], e: r[3], s: 33 }, g = mcq(it), plain = r[1].replace(/<[^>]+>/g, ''), lab = TYPE_INFO[33].title + '：' + plain.slice(0, 34) + (plain.length > 34 ? '…' : '');
+    bk(33, n0 + i + 1, r[0], lab, g);
+    const b = BANK[BANK.length - 1]; b.txt = true; b.local = true; b.src = it; b._o = { gen: g, diff: r[0], label: lab };
+  });
+})();
 function hydrateText(map) {   // 把雲端傳來的題目內容裝回題庫
   Object.keys(map || {}).forEach(id => {
-    const b = BANK.find(x => x.id === id); if (!b || !b.txt) return;
+    const b = BANK.find(x => x.id === id); if (!b || !b.txt || b.local) return;
     const it = Object.assign({}, map[id], { s: b.slot }), plain = it.q.replace(/<table[\s\S]*?<\/table>|<div class="tq-cap">[\s\S]*?<\/div>/g, '').replace(/<[^>]+>/g, '');
     const g = mcq(it), lab = TYPE_INFO[b.slot].title + '：' + plain.slice(0, 34) + (plain.length > 34 ? '…' : '');
     b.src = it; b.gen = g; b.label = lab; b._o = { gen: g, diff: b._o ? b._o.diff : b.diff, label: lab };
