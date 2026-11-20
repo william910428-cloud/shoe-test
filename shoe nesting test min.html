@@ -3297,7 +3297,6 @@ const ORIG_Q3_OPTS = ["<svg width=\"45\" height=\"45\" viewBox=\"0 0 50 50\"> <p
       };
     }
     bk(15, 4, 'mid', '鞋子爆炸圖：逐一判斷每個成品「正確」或「錯在哪裡」（選項大小不同）', () => genShoeExplodeA({ k: 0.4, nopt: 4, judge: true }));
-    bk(15, 5, 'hard', '鞋子爆炸圖：找出比例畫錯的零件', () => genShoeExplodeB({ k: 0.3, nopt: 6, small: 0.8 }));
     for (let i = BANK.length - 1; i >= 0; i--) if (BANK[i].slot === 2) BANK.splice(i, 1);   // 停用「空間折疊」（改用爆炸圖）
     ['Q4-2', 'Q5-2', 'Q4-4', 'Q9-3', 'Q5-4', 'Q6-5'].forEach(id => { const i = BANK.findIndex(b => b.id === id); if (i >= 0) BANK.splice(i, 1); });
 
