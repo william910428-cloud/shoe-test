@@ -1,0 +1,531 @@
+<title>球鞋快跑</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik+Mono+One&family=Noto+Sans+TC:wght@500;900&display=swap">
+<style>
+/* Layout: one full-bleed canvas, DOM overlays for menus. Single committed look: night factory. */
+:root {
+  --ink: #1b1530;
+  --wall: #2a2142;
+  --belt: #3a3350;
+  --sole: #f7f3ea;
+  --accent: #ff5a3c;
+  --lace: #ffd23f;
+  --text: #fdf8ef;
+  --muted: #b9b0cf;
+  --display: "Rubik Mono One", "Noto Sans TC", system-ui, sans-serif;
+  --body: "Noto Sans TC", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  background: var(--ink); color: var(--text); font-family: var(--body);
+  overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage { position: fixed; inset: 0; }
+canvas { display: block; width: 100%; height: 100%; }
+.hud {
+  position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px);
+  left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.score { font-family: var(--display); font-size: clamp(22px, 5vw, 34px); line-height: 1; }
+.sub { font-size: 13px; color: var(--muted); margin-top: 6px; letter-spacing: .04em; }
+.right { text-align: right; }
+.zone { font-weight: 900; font-size: 15px; color: var(--lace); }
+.overlay {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: color-mix(in srgb, var(--ink) 72%, transparent);
+}
+.panel { display: grid; gap: 14px; justify-items: center; text-align: center; max-width: 520px; }
+.title { font-family: var(--display); font-size: clamp(34px, 9vw, 64px); line-height: 1.05; color: var(--sole); text-wrap: balance; }
+.title span { color: var(--accent); }
+.tag { color: var(--muted); font-size: 15px; }
+.keys { display: grid; grid-template-columns: auto auto; gap: 6px 14px; font-size: 14px; color: var(--muted); text-align: left; }
+.keys b { color: var(--text); font-weight: 900; }
+button {
+  font-family: var(--body); font-weight: 900; font-size: 18px; color: var(--ink);
+  background: var(--lace); border: 0; border-radius: 999px; padding: 14px 34px; cursor: pointer;
+  box-shadow: 0 5px 0 #b8901c;
+}
+button:active { transform: translateY(3px); box-shadow: 0 2px 0 #b8901c; }
+button:focus-visible { outline: 3px solid var(--sole); outline-offset: 3px; }
+.big { font-family: var(--display); font-size: clamp(40px, 10vw, 72px); color: var(--lace); line-height: 1; }
+.stats { display: flex; gap: 22px; color: var(--muted); font-size: 14px; flex-wrap: wrap; justify-content: center; }
+.stats b { display: block; color: var(--text); font-size: 20px; font-variant-numeric: tabular-nums; }
+.new { color: var(--accent); font-weight: 900; }
+.proto { font-size: 12px; color: var(--muted); opacity: .7; }
+</style>
+
+<div id="stage"><canvas id="c"></canvas></div>
+
+<div class="hud" id="hud" hidden>
+  <div><div class="score" id="score">0</div><div class="sub" id="laces">鞋帶 0</div></div>
+  <div class="right"><div class="zone" id="zone">裁斷區</div><div class="sub" id="best">最高 0</div></div>
+</div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <div class="title">球鞋<span>快跑</span></div>
+    <div class="tag">剛出廠的球鞋，要一路逃到門市</div>
+    <div class="keys" id="keys"></div>
+    <button id="start">開始跑</button>
+    <div class="proto">試玩版 · 手感測試用</div>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="panel">
+    <div class="tag" id="cause">被打回去重做了</div>
+    <div class="big" id="final">0</div>
+    <div class="new" id="newbest" hidden>新紀錄！</div>
+    <div class="stats">
+      <div>距離<b id="sDist">0 m</b></div>
+      <div>鞋帶<b id="sLace">0</b></div>
+      <div>驚險閃過<b id="sNear">0</b></div>
+    </div>
+    <button id="again">再來一次</button>
+    <div class="proto">空白鍵 / 點一下 也能重來</div>
+  </div>
+</div>
+
+<script>
+(() => {
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const touch = matchMedia('(pointer: coarse)').matches;
+$('keys').innerHTML = touch
+  ? '<b>點右半邊</b><span>跳（按久跳高）</span><b>按住左半邊</b><span>滑鏟</span><b>空中按左邊</b><span>快速落地</span>'
+  : '<b>空白鍵 / ↑</b><span>跳（按久跳高）</span><b>↓ / S</b><span>滑鏟（空中按＝快速落地）</span><b>手把 A / ↓</b><span>也可以</span>';
+
+// ---------- view ----------
+const H = 360; let W = 640, scale = 1, dpr = 1;
+const GROUND = 290;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = innerWidth, h = innerHeight;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  scale = h / H; W = w / scale;
+}
+addEventListener('resize', resize); resize();
+
+// ---------- audio ----------
+let ac = null;
+function beep(f1, f2, dur, type = 'square', vol = .08) {
+  if (!ac) return;
+  const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur);
+}
+const sfx = {
+  jump: () => beep(260, 520, .12),
+  land: () => beep(140, 70, .06, 'triangle', .1),
+  slide: () => beep(300, 120, .15, 'sawtooth', .04),
+  lace: () => { beep(880, 1320, .08, 'square', .05); setTimeout(() => beep(1320, 1760, .08, 'square', .04), 60); },
+  near: () => beep(600, 1200, .1, 'triangle', .07),
+  hit: () => { beep(220, 40, .4, 'sawtooth', .14); beep(90, 30, .5, 'square', .1); },
+  glue: () => beep(180, 90, .2, 'sine', .1),
+  zone: () => [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, f, .12, 'square', .05), i * 90)),
+};
+
+// ---------- storage ----------
+let best = 0; try { best = +localStorage.getItem('shoe-best') || 0; } catch (e) {}
+function saveBest() { try { localStorage.setItem('shoe-best', best); } catch (e) {} }
+
+// ---------- state ----------
+const ZONES = [
+  { name: '裁斷區', at: 0,    wall: '#2a2142', glow: '#ff5a3c' },
+  { name: '針車區', at: 500,  wall: '#1f2b45', glow: '#3cc8ff' },
+  { name: '成型區', at: 1100, wall: '#33213a', glow: '#ff7ad9' },
+  { name: '包裝區', at: 1800, wall: '#203a32', glow: '#5cf2a0' },
+  { name: '門市',   at: 2600, wall: '#3b2f1e', glow: '#ffd23f' },
+];
+let state = 'menu', g;
+function reset() {
+  g = {
+    t: 0, dist: 0, speed: 330, slowT: 0, laces: 0, near: 0,
+    p: { x: 0, y: GROUND, vy: 0, onGround: true, slide: 0, sx: 1, sy: 1, coyote: 0, buffer: 0, holdJump: false, rot: 0 },
+    obs: [], items: [], parts: [], pops: [], nextSpawn: 1.1,
+    shake: 0, hitstop: 0, flash: 0, zone: 0, zoneBanner: 0, beltOff: 0, bgOff: 0,
+  };
+}
+reset();
+
+// ---------- input ----------
+const input = { jumpHeld: false, downHeld: false };
+function pressJump() {
+  if (state !== 'play') { if (state === 'over' && overReady) begin(); return; }
+  input.jumpHeld = true; g.p.buffer = .13;
+}
+function releaseJump() { input.jumpHeld = false; }
+function pressDown() { if (state === 'play') input.downHeld = true; }
+function releaseDown() { input.downHeld = false; }
+
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) { e.preventDefault(); if (state === 'menu') begin(); else pressJump(); }
+  if (['ArrowDown', 'KeyS'].includes(e.code)) { e.preventDefault(); pressDown(); }
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+});
+addEventListener('keyup', e => {
+  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) releaseJump();
+  if (['ArrowDown', 'KeyS'].includes(e.code)) releaseDown();
+});
+const ptrs = new Map();
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const side = e.clientX < innerWidth * .4 ? 'down' : 'jump';
+  ptrs.set(e.pointerId, side);
+  side === 'jump' ? pressJump() : pressDown();
+});
+function ptrUp(e) {
+  const side = ptrs.get(e.pointerId); ptrs.delete(e.pointerId);
+  if (side === 'jump') releaseJump(); else if (side === 'down') releaseDown();
+}
+cv.addEventListener('pointerup', ptrUp); cv.addEventListener('pointercancel', ptrUp);
+$('over').addEventListener('pointerdown', e => { if (e.target.tagName !== 'BUTTON' && overReady) begin(); });
+
+let padPrev = { a: false, d: false };
+function pollPad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const p of pads) {
+    if (!p) continue;
+    const a = p.buttons[0]?.pressed || p.buttons[12]?.pressed;
+    const d = p.buttons[1]?.pressed || p.buttons[13]?.pressed || (p.axes[1] > .6);
+    if (a && !padPrev.a) { if (state === 'menu') begin(); else pressJump(); }
+    if (!a && padPrev.a) releaseJump();
+    if (d && !padPrev.d) pressDown();
+    if (!d && padPrev.d) releaseDown();
+    padPrev = { a, d }; return;
+  }
+}
+
+let paused = false;
+function togglePause() { if (state === 'play') paused = !paused; }
+addEventListener('blur', () => { if (state === 'play') paused = true; });
+document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') paused = true; });
+
+let overReady = false;
+function begin() {
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  ac && ac.resume && ac.resume();
+  reset(); state = 'play'; paused = false; overReady = false;
+  $('menu').hidden = true; $('over').hidden = true; $('hud').hidden = false;
+  $('best').textContent = '最高 ' + best;
+}
+$('start').onclick = begin; $('again').onclick = begin;
+
+// ---------- spawning ----------
+const OBS = {
+  press: { w: 34, h: 46, hit: [4, 6, 4, 0] },     // jump over
+  tall:  { w: 30, h: 70, hit: [4, 6, 4, 0] },     // big jump (hold)
+  blade: { w: 40, h: 40, top: GROUND - 58, hit: [6, 4, 6, 6] }, // slide under; hit bottom at GROUND-24
+  glue:  { w: 70, h: 6 },
+};
+function spawn() {
+  const d = Math.min(g.dist / 2600, 1);
+  const x = W + 40;
+  const r = Math.random();
+  let pattern;
+  if (d < .08) pattern = r < .7 ? 'press' : 'glue';
+  else if (d < .2) pattern = r < .45 ? 'press' : r < .8 ? 'blade' : 'glue';
+  else pattern = r < .25 ? 'press' : r < .45 ? 'blade' : r < .58 ? 'tall' : r < .7 ? 'glue' : r < .82 ? 'combo' : r < .92 ? 'double' : 'gluejump';
+
+  const add = (type, ox = 0) => {
+    const o = OBS[type];
+    g.obs.push({ type, x: x + ox, w: o.w, h: o.h, y: type === 'blade' ? o.top : GROUND - o.h, passed: false, ph: Math.random() * 6 });
+  };
+  if (pattern === 'combo') { add('press'); add('blade', g.speed * .62); }
+  else if (pattern === 'double') { add('press'); add('press', 46); }
+  else if (pattern === 'gluejump') { add('glue'); add('press', 110); }
+  else add(pattern);
+
+  // laces: arc above jump obstacles, line on ground otherwise
+  if (Math.random() < .55) {
+    const lx = x + 260 + Math.random() * 120;
+    const n = 4, hi = Math.random() < .5;
+    for (let i = 0; i < n; i++) {
+      const y = hi ? GROUND - 70 - Math.sin(i / (n - 1) * Math.PI) * 50 : GROUND - 22;
+      g.items.push({ x: lx + i * 30, y, got: false, ph: i * .5 });
+    }
+  }
+  // gap: always leave real reaction time, shrinks a bit with speed
+  const t = 1.05 - d * .4 + Math.random() * .5;
+  g.nextSpawn = Math.max(.62, t) + (pattern === 'combo' || pattern === 'gluejump' ? .45 : 0);
+}
+
+// ---------- particles ----------
+function dust(x, y, n, col = '#cfc6e6', up = 1) {
+  for (let i = 0; i < n; i++) g.parts.push({ x, y, vx: -60 - Math.random() * 160, vy: -Math.random() * 140 * up, life: .4 + Math.random() * .3, t: 0, r: 2 + Math.random() * 3, col });
+}
+function pop(x, y, text, col) { g.pops.push({ x, y, text, col, t: 0 }); }
+
+// ---------- update ----------
+const GRAV = 2700, JUMP_V = -760, CUT_GRAV = 2.3;
+function update(dt) {
+  if (g.hitstop > 0) { g.hitstop -= dt; return; }
+  g.t += dt;
+  const p = g.p; p.x = Math.max(80, W * .2);
+
+  // speed
+  const target = Math.min(330 + g.t * 9, 760);
+  g.speed += (target - g.speed) * Math.min(1, dt * 2);
+  if (g.slowT > 0) g.slowT -= dt;
+  const v = g.speed * (g.slowT > 0 ? .62 : 1);
+  g.dist += v * dt / 10;
+  g.beltOff = (g.beltOff + v * dt) % 40; g.bgOff += v * dt;
+
+  // zone
+  const zi = ZONES.reduce((a, z, i) => g.dist >= z.at ? i : a, 0);
+  if (zi !== g.zone) { g.zone = zi; g.zoneBanner = 2.2; sfx.zone(); $('zone').textContent = ZONES[zi].name; }
+  if (g.zoneBanner > 0) g.zoneBanner -= dt;
+
+  // jump timers
+  p.coyote = p.onGround ? .1 : p.coyote - dt;
+  p.buffer -= dt;
+  if (p.buffer > 0 && p.coyote > 0) {
+    p.vy = JUMP_V; p.onGround = false; p.coyote = 0; p.buffer = 0; p.slide = 0;
+    p.sx = .75; p.sy = 1.3; sfx.jump(); dust(p.x, GROUND, 6);
+  }
+  // slide
+  if (input.downHeld && p.onGround) {
+    if (p.slide <= 0) { sfx.slide(); dust(p.x - 10, GROUND, 5); }
+    p.slide = Math.max(p.slide, .3);
+  }
+  if (p.slide > 0 && !input.downHeld) p.slide -= dt;
+  if (p.slide > 0 && p.onGround && Math.random() < .5) g.parts.push({ x: p.x - 20, y: GROUND - 2, vx: -200, vy: -40 - Math.random() * 60, life: .25, t: 0, r: 2, col: '#ffd9a0' });
+
+  // gravity
+  if (!p.onGround) {
+    let gr = GRAV;
+    if (p.vy < 0 && !input.jumpHeld) gr *= CUT_GRAV;   // short hop on tap
+    if (input.downHeld) gr *= 3.2;                      // fast fall
+    if (p.vy > 0) gr *= 1.25;                           // snappier fall
+    p.vy += gr * dt; p.y += p.vy * dt;
+    p.rot += dt * 7;
+    if (p.y >= GROUND) {
+      const hard = p.vy;
+      p.y = GROUND; p.vy = 0; p.onGround = true; p.rot = 0;
+      p.sx = 1.3; p.sy = .72; sfx.land(); dust(p.x, GROUND, hard > 900 ? 12 : 7);
+      if (hard > 1100) g.shake = Math.max(g.shake, 4);
+    }
+  }
+  p.sx += (1 - p.sx) * Math.min(1, dt * 14); p.sy += (1 - p.sy) * Math.min(1, dt * 14);
+
+  // player hitbox
+  const sliding = p.slide > 0 && p.onGround;
+  const ph = sliding ? 18 : 30, pw = sliding ? 56 : 46;
+  const box = { l: p.x - pw / 2 + 5, r: p.x + pw / 2 - 5, t: p.y - ph + 3, b: p.y };
+
+  // obstacles
+  g.nextSpawn -= dt * (v / 330) * .9 + dt * .1;
+  if (g.nextSpawn <= 0) spawn();
+  for (const o of g.obs) {
+    o.x -= v * dt; o.ph += dt;
+    if (o.type === 'glue') {
+      if (!o.hitGlue && p.onGround && box.r > o.x && box.l < o.x + o.w) { o.hitGlue = true; g.slowT = .9; sfx.glue(); dust(p.x, GROUND, 8, '#9be7ff'); pop(p.x, p.y - 50, '黏住了！', '#9be7ff'); }
+      continue;
+    }
+    const hb = OBS[o.type].hit;
+    const ob = { l: o.x + hb[0], r: o.x + o.w - hb[2], t: o.y + hb[1], b: o.y + o.h - hb[3] };
+    if (box.r > ob.l && box.l < ob.r && box.b > ob.t && box.t < ob.b) { die(o.type); return; }
+    if (o.type !== 'blade' && box.r > ob.l && box.l < ob.r) o.minClear = Math.min(o.minClear ?? 99, ob.t - box.b);
+    if (!o.passed && ob.r < box.l) {
+      o.passed = true;
+      if ((o.minClear ?? 99) < 12) {
+        g.near++; sfx.near(); pop(p.x, p.y - 56, '驚險！+25', '#ff7ad9'); g.flash = .12;
+      }
+    }
+  }
+  g.obs = g.obs.filter(o => o.x + o.w > -60);
+
+  // laces
+  for (const it of g.items) {
+    it.x -= v * dt; it.ph += dt * 4;
+    if (!it.got && Math.abs(it.x - p.x) < 24 && it.y > box.t - 14 && it.y < box.b + 6) {
+      it.got = true; g.laces++; sfx.lace(); pop(it.x, it.y - 10, '+10', '#ffd23f');
+      for (let i = 0; i < 6; i++) g.parts.push({ x: it.x, y: it.y, vx: (Math.random() - .5) * 240, vy: (Math.random() - .5) * 240, life: .35, t: 0, r: 2.5, col: '#ffd23f' });
+    }
+  }
+  g.items = g.items.filter(it => it.x > -40 && !it.got);
+
+  for (const q of g.parts) { q.t += dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 500 * dt; }
+  g.parts = g.parts.filter(q => q.t < q.life);
+  for (const q of g.pops) q.t += dt;
+  g.pops = g.pops.filter(q => q.t < .8);
+  if (g.shake > 0) g.shake = Math.max(0, g.shake - dt * 30);
+  if (g.flash > 0) g.flash -= dt;
+
+  const score = calcScore();
+  $('score').textContent = score; $('laces').textContent = `鞋帶 ${g.laces} · ${Math.floor(g.dist)} m`;
+}
+const calcScore = () => Math.floor(g.dist) + g.laces * 10 + g.near * 25;
+
+const CAUSES = { press: '被打釘機釘住了', tall: '撞上高壓打釘機', blade: '被裁刀切到了' };
+function die(type) {
+  state = 'dying'; g.hitstop = .12; g.shake = 12; g.flash = .25; sfx.hit();
+  dust(g.p.x, g.p.y - 15, 26, '#ff5a3c', 2);
+  const s = calcScore(), nb = s > best;
+  if (nb) { best = s; saveBest(); }
+  $('final').textContent = s; $('sDist').textContent = Math.floor(g.dist) + ' m';
+  $('sLace').textContent = g.laces; $('sNear').textContent = g.near;
+  $('newbest').hidden = !nb; $('cause').textContent = CAUSES[type] + '，打回去重做';
+  setTimeout(() => { state = 'over'; $('over').hidden = false; $('hud').hidden = true; setTimeout(() => overReady = true, 350); }, 650);
+}
+
+// ---------- draw ----------
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+function draw() {
+  const Z = ZONES[g.zone];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = Z.wall; ctx.fillRect(0, 0, cv.width, cv.height);
+  const sh = g.shake ? (Math.random() - .5) * g.shake : 0, sv = g.shake ? (Math.random() - .5) * g.shake : 0;
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, sh * scale * dpr, sv * scale * dpr);
+
+  // far wall: windows
+  const off1 = g.bgOff * .15 % 160;
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  for (let x = -off1; x < W + 160; x += 160) { rr(x + 20, 50, 90, 70, 6); ctx.fill(); }
+  ctx.fillStyle = Z.glow; ctx.globalAlpha = .18;
+  for (let x = -off1; x < W + 160; x += 160) { rr(x + 26, 56, 78, 58, 4); ctx.fill(); }
+  ctx.globalAlpha = 1;
+  // mid: shelves of shoe boxes
+  const off2 = g.bgOff * .4 % 220;
+  for (let x = -off2; x < W + 220; x += 220) {
+    ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(x, 170, 150, 6); ctx.fillRect(x, 230, 150, 6);
+    ctx.fillRect(x + 4, 170, 5, 120); ctx.fillRect(x + 141, 170, 5, 120);
+    for (let i = 0; i < 4; i++) { ctx.fillStyle = i % 2 ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.12)'; ctx.fillRect(x + 12 + i * 33, 146, 30, 24); ctx.fillRect(x + 12 + i * 33, 206, 30, 24); }
+  }
+  // belt
+  ctx.fillStyle = '#3a3350'; ctx.fillRect(0, GROUND, W, H - GROUND);
+  ctx.fillStyle = '#4b4366'; ctx.fillRect(0, GROUND, W, 8);
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  for (let x = -g.beltOff; x < W + 40; x += 40) ctx.fillRect(x, GROUND + 8, 18, 14);
+  ctx.fillStyle = '#26203a';
+  for (let x = -(g.beltOff * 1) % 60; x < W + 60; x += 60) { ctx.beginPath(); ctx.arc(x, GROUND + 34, 9, 0, 7); ctx.fill(); }
+  ctx.fillStyle = Z.glow; ctx.globalAlpha = .55; ctx.fillRect(0, GROUND - 1, W, 2); ctx.globalAlpha = 1;
+
+  // obstacles
+  for (const o of g.obs) drawObs(o);
+  // laces
+  for (const it of g.items) {
+    ctx.save(); ctx.translate(it.x, it.y + Math.sin(it.ph) * 3);
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.ellipse(-5, 0, 6, 4, -.4, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(5, 0, 6, 4, .4, 0, 7); ctx.stroke();
+    ctx.restore();
+  }
+  // player
+  if (state === 'play' || state === 'menu' || (state === 'dying' && g.hitstop > 0)) drawShoe();
+  // particles
+  for (const q of g.parts) { ctx.globalAlpha = 1 - q.t / q.life; ctx.fillStyle = q.col; ctx.fillRect(q.x - q.r / 2, q.y - q.r / 2, q.r, q.r); }
+  ctx.globalAlpha = 1;
+  // pops
+  ctx.textAlign = 'center'; ctx.font = '900 16px "Noto Sans TC", sans-serif';
+  for (const q of g.pops) { ctx.globalAlpha = 1 - q.t / .8; ctx.fillStyle = q.col; ctx.fillText(q.text, q.x, q.y - q.t * 40); }
+  ctx.globalAlpha = 1;
+  // zone banner
+  if (g.zoneBanner > 0 && state === 'play') {
+    const a = Math.min(1, g.zoneBanner, (2.2 - g.zoneBanner) * 4);
+    ctx.globalAlpha = a; ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 118, W, 54);
+    ctx.fillStyle = Z.glow; ctx.font = '900 28px "Noto Sans TC", sans-serif'; ctx.fillText('— ' + Z.name + ' —', W / 2, 155);
+    ctx.globalAlpha = 1;
+  }
+  if (g.slowT > 0) { ctx.fillStyle = 'rgba(155,231,255,.08)'; ctx.fillRect(0, 0, W, H); }
+  if (g.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${g.flash})`; ctx.fillRect(0, 0, W, H); }
+  if (paused && state === 'play') {
+    ctx.fillStyle = 'rgba(27,21,48,.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fdf8ef'; ctx.font = '900 30px "Noto Sans TC", sans-serif'; ctx.fillText('暫停', W / 2, 160);
+    ctx.font = '500 15px "Noto Sans TC", sans-serif'; ctx.fillStyle = '#b9b0cf'; ctx.fillText(touch ? '點一下繼續' : '按 Esc 或空白鍵繼續', W / 2, 192);
+  }
+}
+
+function drawObs(o) {
+  ctx.save();
+  if (o.type === 'glue') {
+    ctx.fillStyle = '#9be7ff'; ctx.globalAlpha = .85;
+    ctx.beginPath(); ctx.ellipse(o.x + o.w / 2, GROUND + 1, o.w / 2, 6, 0, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1; ctx.fillStyle = '#e6fbff';
+    ctx.beginPath(); ctx.ellipse(o.x + o.w / 2 - 12, GROUND - 1, 8, 2, 0, 0, 7); ctx.fill();
+  } else if (o.type === 'press' || o.type === 'tall') {
+    // nail press: base + piston
+    const bob = Math.abs(Math.sin(o.ph * 6)) * 6;
+    ctx.fillStyle = '#5a5170'; rr(o.x - 3, GROUND - 10, o.w + 6, 10, 2); ctx.fill();
+    ctx.fillStyle = '#ff5a3c'; rr(o.x, o.y + bob, o.w, o.h - 10 - bob, 4); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(o.x, o.y + bob + 8, o.w, 4);
+    ctx.fillStyle = '#ffd23f';
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(o.x + 6 + i * ((o.w - 12) / 2) - 3, o.y + bob); ctx.lineTo(o.x + 6 + i * ((o.w - 12) / 2), o.y + bob - 8); ctx.lineTo(o.x + 6 + i * ((o.w - 12) / 2) + 3, o.y + bob); ctx.fill(); }
+  } else if (o.type === 'blade') {
+    const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+    ctx.fillStyle = '#5a5170'; ctx.fillRect(cx - 3, 0, 6, cy);
+    ctx.translate(cx, cy); ctx.rotate(-o.ph * 10);
+    ctx.fillStyle = '#d9d4e8';
+    ctx.beginPath();
+    for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2, r = i % 2 ? 15 : 21; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ff5a3c'; ctx.beginPath(); ctx.arc(0, 0, 6, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawShoe() {
+  const p = g.p, sliding = p.slide > 0 && p.onGround;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  const sd = Math.max(.3, 1 - (GROUND - p.y) / 200);
+  ctx.beginPath(); ctx.ellipse(0, GROUND - p.y + 2, 24 * sd, 4 * sd, 0, 0, 7); ctx.fill();
+  let sx = p.sx, sy = p.sy;
+  if (sliding) { sx *= 1.2; sy *= .6; }
+  ctx.scale(sx, sy);
+  if (!p.onGround) ctx.rotate(Math.max(-.35, Math.min(.35, p.vy / 2200)));
+  const run = p.onGround && !sliding ? Math.sin(g.t * 28) * 2 : 0;
+  ctx.translate(0, -Math.abs(run));
+  // sole
+  ctx.fillStyle = '#f7f3ea'; rr(-26, -9, 54, 9, 4); ctx.fill();
+  ctx.fillStyle = '#ff5a3c'; ctx.fillRect(-26, -3, 54, 3);
+  // upper
+  ctx.fillStyle = '#4f7cff';
+  ctx.beginPath();
+  ctx.moveTo(-24, -9); ctx.lineTo(-24, -28); ctx.quadraticCurveTo(-22, -33, -14, -32);
+  ctx.lineTo(-4, -30); ctx.quadraticCurveTo(6, -20, 18, -18); ctx.quadraticCurveTo(28, -16, 28, -9); ctx.closePath(); ctx.fill();
+  // swoosh-free stripe + heel tab
+  ctx.fillStyle = '#f7f3ea';
+  ctx.beginPath(); ctx.moveTo(-16, -14); ctx.quadraticCurveTo(2, -12, 16, -20); ctx.lineTo(18, -16); ctx.quadraticCurveTo(2, -8, -16, -11); ctx.fill();
+  ctx.fillStyle = '#ffd23f'; ctx.fillRect(-26, -30, 4, 12);
+  // laces
+  ctx.strokeStyle = '#f7f3ea'; ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(-6 + i * 6, -28 + i * 3); ctx.lineTo(-1 + i * 6, -24 + i * 3); ctx.stroke(); }
+  // eye
+  ctx.fillStyle = '#1b1530'; ctx.beginPath(); ctx.arc(10, -21, 2.6, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(10.8, -21.8, 1, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- loop ----------
+let last = performance.now();
+function frame(now) {
+  let dt = Math.min(.033, (now - last) / 1000); last = now;
+  pollPad();
+  if (state === 'play' && paused && (g.p.buffer > 0 || input.jumpHeld)) { paused = false; g.p.buffer = 0; input.jumpHeld = false; }
+  if (state === 'play' && !paused) update(dt);
+  else if (state === 'dying' || state === 'over') {
+    for (const q of g.parts) { q.t += dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 500 * dt; }
+    g.parts = g.parts.filter(q => q.t < q.life);
+    if (g.shake > 0) g.shake = Math.max(0, g.shake - dt * 30);
+    if (g.flash > 0) g.flash -= dt;
+    if (g.hitstop > 0) g.hitstop -= dt;
+  }
+  else if (state === 'menu') { g.bgOff += 120 * dt; g.beltOff = (g.beltOff + 120 * dt) % 40; g.t += dt; g.p.x = Math.max(80, W * .2); }
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
